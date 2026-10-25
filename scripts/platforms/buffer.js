@@ -60,7 +60,7 @@ function publisher(platform, captionFor) {
     const url = await hostVideo(file, meta);
     const future = at - Date.now() > 5 * 60e3;
     const input = { text: captionFor(meta, platform), channelId: ch.id, schedulingType: { enum: 'automatic' },
-      mode: { enum: future ? 'customScheduled' : 'addToQueue' }, dueAt: future ? new Date(at).toISOString() : undefined,
+      mode: { enum: future ? 'customScheduled' : 'shareNow' }, dueAt: future ? new Date(at).toISOString() : undefined,
       assets: [{ video: { url } }], metadata: metadataFor(platform, meta) };
     const r = (await gql(`mutation { createPost(input: ${lit(input)}) { ... on PostActionSuccess { post { id } } ... on MutationError { message } } }`)).createPost;
     if (!r || !r.post) throw new Error('Buffer rejected the post: ' + ((r && r.message) || 'unknown error'));
