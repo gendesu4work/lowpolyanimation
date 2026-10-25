@@ -69,17 +69,14 @@ function listVideos() {
 }
 const saveMeta = (dir, meta) => writeJson(path.join(dir, 'meta.json'), meta);
 
-// The post text for one platform. Facebook, Instagram and TikTok get just the headline question plus a few hashtags, so nothing needs a
-// tap on "more"; YouTube keeps the full description.
-const SHORT = ['facebook', 'instagram', 'tiktok'], SHORT_TAGS = 4;
+// The post text for every platform: just the headline question plus a few hashtags, so nothing needs a tap on "more".
+// (YouTube's title is set separately and its description stays short too, with #Shorts.)
+const SHORT_TAGS = 4;
 function captionFor(meta, platform) {
-  if (SHORT.includes(platform)) {
-    const tags = (meta.hashtags || []).filter(t => !/^#shorts$/i.test(t)).slice(0, SHORT_TAGS).join(' ');
-    return [meta.headline || meta.title, tags].filter(Boolean).join('\n\n');
-  }
-  let text = (meta.captions && meta.captions[platform]) || [meta.description, (meta.hashtags || []).join(' ')].filter(Boolean).join('\n\n');
-  if (platform === 'youtube' && !/#shorts\b/i.test(text)) text += ' #Shorts';
-  return text;
+  const yt = platform === 'youtube';
+  const tags = (meta.hashtags || []).filter(t => !/^#shorts$/i.test(t)).slice(0, SHORT_TAGS);
+  if (yt) tags.push('#Shorts');
+  return [meta.headline || meta.title, tags.join(' ')].filter(Boolean).join('\n\n');
 }
 
 module.exports = { P, readJson, writeJson, config, enabledPlatforms, tokens, api, sleep, log, openBrowser, listVideos, saveMeta, captionFor };

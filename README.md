@@ -7,7 +7,7 @@ In the app you:
 1. generate scored video ideas and pick one,
 2. let Claude animate it in 3D on your PC and render a 1080x1920 MP4 with music and sound,
 3. review it, ask for changes, or approve it,
-4. post it now or at a time you choose (the title and a few hashtags go to Facebook, Instagram and TikTok; YouTube gets the full description),
+4. post it now or at a time you choose (each post is just the headline question plus a few hashtags),
 5. and let it reply to new comments with a short, positive reply that is different every time.
 
 It runs on **Windows** on your own PC. Nothing is sent anywhere except the platforms you connect and Claude.
@@ -108,7 +108,7 @@ For the dashboard, also add the scopes `video.list` (per-video views) and `user.
 powershell -ExecutionPolicy Bypass -File install-scheduler.ps1
 ```
 
-- Facebook, Instagram and TikTok captions are only the headline question plus up to 4 hashtags. YouTube gets the title, full description and hashtags.
+- Every platform's post text is only the headline question plus up to 4 hashtags (YouTube also gets #Shorts), so nothing needs a tap on "more". YouTube's title is set separately.
 
 ## Comment replies
 

@@ -62,7 +62,7 @@ Write `videos/<folder>/meta.json`:
 - Title: under 70 characters, curiosity gap, at most one emoji, no clickbait the video doesn't deliver.
 - Description: 2–4 short lines; first line is the hook (it's all most people see); end with a comment prompt ("Which scene got you?").
 - 4–7 hashtags, mixing broad (#whatif #animation) and topic-specific. YouTube gets #Shorts added automatically.
-- `headline` is the question shown on screen ("What if gravity was half as strong for one day?"). Facebook, Instagram and TikTok posts use only the headline plus up to 4 hashtags (never the description, `captions` overrides are ignored for them), so nobody has to tap "more". YouTube uses the full title, description and hashtags.
+- `headline` is the question shown on screen ("What if gravity was half as strong for one day?"). Every platform's post text is only the headline plus up to 4 hashtags (YouTube also gets #Shorts); the description and `captions` overrides are not posted, so nobody has to tap "more".
 - Don't set `scheduledAt`; publish picks the best slot. Set it only if the user asked for a specific time.
 
 ## 5. Publish
