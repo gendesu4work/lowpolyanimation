@@ -1,0 +1,555 @@
+<title>Dinosaurs Never Left</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one 9:16 film frame on a dark ground; every caption is drawn into the frame, inside the TikTok/Shorts safe zone */
+:root{
+  --ink:#0d0f0c; --paper:#f1efe8; --dim:#9fa596; --leaf:#9bd36a; --rule:#2c3229;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--ink);color:var(--paper);box-sizing:border-box;font-family:var(--mono);
+  padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.player{height:100%;display:flex;flex-direction:column;align-items:center;gap:10px}
+.viewport{flex:1 1 auto;min-height:0;width:100%;display:flex;align-items:center;justify-content:center}
+#view{display:block;border-radius:8px;background:#000;width:270px;height:480px}
+.controls{display:flex;align-items:center;gap:8px;width:270px;max-width:100%}
+.controls button{flex:none;font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--paper);
+  background:transparent;border:1px solid var(--rule);border-radius:4px;padding:8px 10px;cursor:pointer}
+.controls button:hover{border-color:var(--dim)}
+.controls button[aria-pressed="true"]{border-color:var(--leaf);color:var(--leaf)}
+.controls button:focus-visible,.controls input:focus-visible{outline:2px solid var(--leaf);outline-offset:2px}
+.controls input[type=range]{flex:1 1 auto;min-width:0;accent-color:var(--leaf)}
+.clock{flex:none;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.export .controls{display:none}
+</style>
+
+<div class="player">
+  <div class="viewport" id="viewport">
+    <canvas id="view" role="img" aria-label="Animated what-if: the asteroid misses Earth 66 million years ago. Dinosaurs keep ruling, mammals stay small, scientists' imagined dinosauroid appears, and in a modern alternate world a long-neck stops rush hour, farms raise Triceratops, a kid's pet is a feathered raptor, pterosaurs fly near airplanes, and the twist: a pigeon, because birds are dinosaurs."></canvas>
+  </div>
+  <div class="controls">
+    <button id="play" type="button">Pause</button>
+    <button id="snd" type="button" aria-pressed="false">Sound off</button>
+    <input id="scrub" type="range" min="0" max="70" step="0.01" value="0" aria-label="Timeline position">
+    <span class="clock" id="clock">0:00</span>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/BokehShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/MaskPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/BokehPass.js"></script>
+<script>
+(function(){
+const DUR=70, SP=new THREE.Vector3(500000,0,0), CX=2000, FX=4000, LX=6000;
+const EXPORT=new URLSearchParams(location.search).get('export')==='1';
+if(EXPORT) document.body.classList.add('export');
+const $=id=>document.getElementById(id);
+const clamp01=x=>x<0?0:x>1?1:x, lerp=(a,b,k)=>a+(b-a)*k, sm=x=>{x=clamp01(x);return x*x*(3-2*x)};
+function rngFrom(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rng=rngFrom(66);
+const LEAF='#9bd36a', PAPER='#f1efe8';
+
+/* ---------- renderer with bloom and depth of field ---------- */
+const view=$('view'), g2=view.getContext('2d');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene(); scene.background=new THREE.Color('#9fcbe8'); scene.fog=new THREE.Fog('#9fcbe8',200,2600);
+const camera=new THREE.PerspectiveCamera(55,9/16,0.05,4000);
+const hemi=new THREE.HemisphereLight('#f4f8ff','#55603f',0.85); scene.add(hemi);
+const sun=new THREE.DirectionalLight('#fff1d6',1.0); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048); sun.shadow.bias=-0.0005; scene.add(sun); scene.add(sun.target);
+const composer=new THREE.EffectComposer(renderer);
+composer.addPass(new THREE.RenderPass(scene,camera));
+const bloom=new THREE.UnrealBloomPass(new THREE.Vector2(540,960),0.28,0.35,0.97); composer.addPass(bloom);
+const bokeh=new THREE.BokehPass(scene,camera,{focus:10,aperture:0.0003,maxblur:0.007,width:540,height:960}); composer.addPass(bokeh);
+function sizeAll(w,h){renderer.setSize(w,h,false);composer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix()}
+
+/* ---------- building blocks ---------- */
+const UP=new THREE.Vector3(0,1,0), FWD=new THREE.Vector3(0,0,1);
+const lamCache={}, lam=c=>lamCache[c]||(lamCache[c]=new THREE.MeshLambertMaterial({color:c}));
+const BOXG=new THREE.BoxGeometry(1,1,1), SPH=new THREE.SphereGeometry(1,18,12), CYL=new THREE.CylinderGeometry(1,1,1,14), CONE=new THREE.ConeGeometry(1,1,10);
+function mesh(geo,m,parent,sh=true){const o=new THREE.Mesh(geo,m);o.castShadow=sh;o.receiveShadow=true;parent.add(o);return o}
+function box(w,h,d,m,x,y,z,p){const o=mesh(BOXG,m,p);o.scale.set(w,h,d);o.position.set(x,y,z);return o}
+function ell(sx,sy,sz,m,x,y,z,p){const o=mesh(SPH,m,p);o.scale.set(sx,sy,sz);o.position.set(x,y,z);return o}
+function cone(r,h,m,x,y,z,p){const o=mesh(CONE,m,p);o.scale.set(r,h,r);o.position.set(x,y,z);return o}
+function capsule(r,m,parent){const g=new THREE.Group(),c=mesh(CYL,m,g),a=mesh(SPH,m,g),b=mesh(SPH,m,g);[a,b].forEach(s=>s.scale.setScalar(r));c.scale.set(r,1,r);parent.add(g);return {g,c,a,b}}
+const tv=new THREE.Vector3();
+function pin(k,A,B){const len=Math.max(0.0001,A.distanceTo(B));k.g.position.copy(A).add(B).multiplyScalar(0.5);k.g.quaternion.setFromUnitVectors(UP,tv.copy(B).sub(A).normalize());k.c.scale.y=len;k.a.position.y=len/2;k.b.position.y=-len/2}
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+// a bendy chain of balls for necks and tails: from A toward B with a sideways sway and an arc
+function chain(n,r0,r1,m,parent){const balls=[];for(let i=0;i<n;i++){const s=mesh(SPH,m,parent);balls.push(s)}return {balls,r0,r1}}
+function poseChain(ch,A,B,arc,sway){ch.balls.forEach((s,i)=>{const k=i/(ch.balls.length-1);s.position.set(lerp(A.x,B.x,k)+Math.sin(k*Math.PI*0.9)*sway*k,lerp(A.y,B.y,k)+Math.sin(k*Math.PI)*arc,lerp(A.z,B.z,k));s.scale.setScalar(lerp(ch.r0,ch.r1,k))})}
+const EYE=lam('#15130f'), WHITE=lam('#f6f4ee');
+
+/* ---------- rounded people with faces ---------- */
+function makeHuman(o){
+  const g=new THREE.Group(); scene.add(g); const sc=o.scale||1; g.scale.setScalar(sc);
+  const skin=lam(o.skin), shirt=lam(o.shirt), pants=lam(o.pants);
+  ell(0.2,0.29,0.15,shirt,0,1.2,0,g); ell(0.19,0.13,0.15,pants,0,0.92,0,g);
+  const head=new THREE.Group(); head.position.set(0,1.62,0); g.add(head);
+  ell(0.13,0.145,0.13,skin,0,0,0,head);
+  const big=o.bigEyes;
+  [-1,1].forEach(s=>{if(big){ell(0.04,0.045,0.02,WHITE,s*0.05,0.02,0.115,head);ell(0.02,0.025,0.01,EYE,s*0.05,0.02,0.13,head)}else ell(0.016,0.02,0.01,EYE,s*0.045,0.015,0.122,head)});
+  const smile=mesh(new THREE.TorusGeometry(0.035,0.007,6,14,Math.PI),lam('#5b2a22'),head,false); smile.position.set(0,-0.045,0.118); smile.rotation.z=Math.PI;
+  if(o.hair){const h=ell(0.137,0.1,0.137,lam(o.hair),0,0.055,-0.01,head);if(o.long)ell(0.13,0.16,0.07,lam(o.hair),0,-0.06,-0.08,head)}
+  if(o.cap){ell(0.14,0.07,0.14,lam(o.cap),0,0.085,0,head);box(0.18,0.02,0.12,lam(o.cap),0,0.06,0.13,head)}
+  const legs=[capsule(0.065,pants,g),capsule(0.065,pants,g)], feet=[ell(0.07,0.045,0.11,lam(o.shoe||'#2b2b30'),0,0,0,g),ell(0.07,0.045,0.11,lam(o.shoe||'#2b2b30'),0,0,0,g)];
+  const arms=[capsule(0.05,shirt,g),capsule(0.05,shirt,g)], hands=[ell(0.045,0.05,0.045,skin,0,0,0,g),ell(0.045,0.05,0.045,skin,0,0,0,g)];
+  return {g,head,legs,feet,arms,hands,sc};
+}
+// pose in the person's own space; hand targets are local points or null to hang
+function poseHuman(p,{walk=0,ph=0,sit=0,handL=null,handR=null}={}){
+  for(let s=0;s<2;s++){const sx=s?0.09:-0.09,sw=walk*Math.sin(ph+s*Math.PI)*0.2;
+    const hip=V(sx,0.88,0), knee=V(sx,lerp(0.48,0.9,sit),lerp(sw*0.5,0.4,sit)), foot=V(sx,lerp(0.05,0.45,sit),lerp(sw,0.5,sit));
+    if(sit>0.5){pin(p.legs[s],hip,knee);const f2=V(sx,0.05,0.5);p.legs[s].g.userData.k||(p.legs[s].g.userData.k=capsule(0.06,p.legs[s].c.material,p.g));pin(p.legs[s].g.userData.k,knee,f2);p.feet[s].position.set(sx,0.04,0.56)}
+    else{pin(p.legs[s],hip,foot);if(p.legs[s].g.userData.k)p.legs[s].g.userData.k.g.visible=false;p.feet[s].position.set(sx,0.04,foot.z+0.05)}
+    if(sit>0.5&&p.legs[s].g.userData.k)p.legs[s].g.userData.k.g.visible=true;
+  }
+  [[-1,handR],[1,handL]].forEach(([s,tgt],i)=>{const sh=V(0.23*s,1.42,0),hand=tgt||V(0.26*s,0.95,walk*Math.sin(ph+i*Math.PI)*-0.15);pin(p.arms[i],sh,hand);p.hands[i].position.copy(hand)});
+}
+
+/* ---------- dinosaurs, all from rounded parts ---------- */
+function makeSauropod(col){
+  const g=new THREE.Group(); scene.add(g); const m=lam(col), belly=lam('#b9b48a');
+  ell(2.6,2.3,5.2,m,0,5,0,g); ell(2.2,1.6,4.4,belly,0,4.2,0,g);
+  const legs=[0,1,2,3].map(()=>capsule(0.75,m,g)), neck=chain(9,1.2,0.5,m,g), tail=chain(10,1.1,0.15,m,g);
+  const head=ell(0.7,0.55,1.1,m,0,0,0,g); const eyes=[ell(0.12,0.12,0.12,EYE,0,0,0,g),ell(0.12,0.12,0.12,EYE,0,0,0,g)];
+  return {g,update(t,ph,walk){
+    [[-1.6,3],[1.6,3],[-1.6,-3],[1.6,-3]].forEach(([x,z],i)=>{const sw=walk*Math.sin(ph+[0,Math.PI,Math.PI,0][i])*1.0;pin(legs[i],V(x,4.4,z),V(x,0.6,z+sw))});
+    const hx=Math.sin(t*0.5)*1.2, hy=12+Math.sin(t*0.7)*0.4; poseChain(neck,V(0,6,4.2),V(hx,hy,10.5),0.6,hx*0.2);
+    head.position.set(hx,hy+0.2,11.3); eyes[0].position.set(hx-0.45,hy+0.45,11.6); eyes[1].position.set(hx+0.45,hy+0.45,11.6);
+    poseChain(tail,V(0,5.2,-4.8),V(Math.sin(t*1.1)*2.5,2.6,-15),0.5,Math.sin(t*1.1)*0.8);
+  }};
+}
+function makeTRex(){
+  const g=new THREE.Group(); scene.add(g); const m=lam('#6f6340'), belly=lam('#c9b98a');
+  const body=ell(1.5,1.6,3,m,0,3.8,0,g); body.rotation.x=-0.18; ell(1.2,1.1,2.4,belly,0,3.3,0.3,g);
+  const hg=new THREE.Group(); hg.position.set(0,5.2,3.4); g.add(hg);
+  ell(0.95,0.8,1.6,m,0,0.15,0.9,hg); const jaw=new THREE.Group(); jaw.position.set(0,-0.25,0.2); hg.add(jaw); ell(0.8,0.32,1.4,belly,0,-0.1,0.8,jaw);
+  [-1,1].forEach(s=>{ell(0.15,0.15,0.1,WHITE,s*0.62,0.45,1.3,hg);ell(0.08,0.08,0.06,EYE,s*0.66,0.45,1.36,hg)});
+  for(let i=0;i<6;i++){cone(0.06,0.18,WHITE,-0.5+i*0.2,-0.12,1.9-Math.abs(i-2.5)*0.15,hg).rotation.x=Math.PI}
+  const tail=chain(9,1.0,0.12,m,g);
+  const thighs=[capsule(0.6,m,g),capsule(0.6,m,g)], shins=[capsule(0.38,m,g),capsule(0.38,m,g)], feet=[ell(0.45,0.2,0.8,m,0,0,0,g),ell(0.45,0.2,0.8,m,0,0,0,g)];
+  const arms=[capsule(0.12,m,g),capsule(0.12,m,g)];
+  return {g,update(t,ph,walk,roar=0){
+    for(let s=0;s<2;s++){const sx=s?0.95:-0.95,sw=walk*Math.sin(ph+s*Math.PI),lift=walk*Math.max(0,Math.sin(ph+s*Math.PI+Math.PI/2))*0.5;
+      const hip=V(sx,3.5,0.2),knee=V(sx*1.05,2.1+lift*0.3,1.0+sw*0.6),foot=V(sx,0.25+lift,0.3+sw*1.3);
+      pin(thighs[s],hip,knee);pin(shins[s],knee,foot);feet[s].position.set(sx,0.2+lift,foot.z+0.4);
+      pin(arms[s],V(sx*0.8,4.3,2.6),V(sx*0.9,3.8,3.3))}
+    g.children[0].position.y=3.8+Math.abs(Math.sin(ph))*0.12*walk;
+    hg.rotation.set(-0.15*roar+Math.sin(t*1.3)*0.05,Math.sin(t*0.6)*0.15,0); jaw.rotation.x=0.05+0.55*roar;
+    poseChain(tail,V(0,4,-2.6),V(Math.sin(t*1.4)*1.8,3.4,-9.5),0.3,Math.sin(t*1.4)*0.6);
+  }};
+}
+function makeTrike(){
+  const g=new THREE.Group(); scene.add(g); const m=lam('#8a6a48'), frillM=lam('#c97a4a'), horn=lam('#efe6cf');
+  ell(1.3,1.15,2.3,m,0,1.65,0,g);
+  const hg=new THREE.Group(); hg.position.set(0,1.6,2.2); g.add(hg);
+  ell(0.6,0.55,0.9,m,0,0,0.6,hg); const fr=mesh(CYL,frillM,hg); fr.scale.set(1.15,0.12,1.0); fr.rotation.x=Math.PI/2-0.5; fr.position.set(0,0.45,0.05);
+  cone(0.1,0.7,horn,-0.28,0.5,0.85,hg).rotation.x=0.9; cone(0.1,0.7,horn,0.28,0.5,0.85,hg).rotation.x=0.9; cone(0.07,0.3,horn,0,0.05,1.45,hg).rotation.x=0.6;
+  [-1,1].forEach(s=>{ell(0.07,0.07,0.05,EYE,s*0.42,0.18,0.95,hg)});
+  const legs=[0,1,2,3].map(()=>capsule(0.28,m,g)), tail=chain(6,0.55,0.12,m,g);
+  return {g,update(t,ph,walk,graze=0){
+    [[-0.8,1.3],[0.8,1.3],[-0.8,-1.3],[0.8,-1.3]].forEach(([x,z],i)=>{const sw=walk*Math.sin(ph+[0,Math.PI,Math.PI,0][i])*0.4;pin(legs[i],V(x,1.4,z),V(x,0.25,z+sw))});
+    hg.rotation.x=0.55*graze; poseChain(tail,V(0,1.7,-2.1),V(Math.sin(t*1.5)*0.8,1.0,-4.2),0.15,0.3);
+  }};
+}
+function makeRaptor(){
+  const g=new THREE.Group(); scene.add(g); const m=lam('#4f6f96'), fea=lam('#e58a3a'), belly=lam('#d9d2bd');
+  const body=ell(0.26,0.28,0.48,m,0,0.78,0,g); ell(0.2,0.2,0.36,belly,0,0.7,0.06,g);
+  const hg=new THREE.Group(); hg.position.set(0,1.18,0.42); g.add(hg);
+  ell(0.13,0.12,0.22,m,0,0,0.06,hg); ell(0.08,0.06,0.14,m,0,-0.03,0.22,hg);
+  [-1,1].forEach(s=>{ell(0.045,0.045,0.03,WHITE,s*0.09,0.04,0.12,hg);ell(0.025,0.025,0.02,EYE,s*0.1,0.04,0.14,hg)});
+  for(let i=0;i<4;i++){const c=cone(0.03,0.16,fea,0,0.1+i*0.01,-0.02-i*0.06,hg);c.rotation.x=-0.6}
+  const neck=capsule(0.08,m,g), tail=chain(8,0.17,0.05,m,g), tip=[0,1,2].map(i=>{const c=cone(0.05,0.22,fea,0,0,0,g);return c});
+  const thighs=[capsule(0.09,m,g),capsule(0.09,m,g)], shins=[capsule(0.05,m,g),capsule(0.05,m,g)], arms=[capsule(0.04,fea,g),capsule(0.04,fea,g)];
+  return {g,hg,update(t,ph,walk,sit=0,tilt=0){
+    const by=lerp(0.78,0.45,sit); body.position.y=by;
+    pin(neck,V(0,by+0.18,0.32),V(0,lerp(1.12,0.86,sit),0.42)); hg.position.y=lerp(1.18,0.92,sit); hg.rotation.set(Math.sin(t*2)*0.05,Math.sin(t*0.9)*0.25,tilt);
+    for(let s=0;s<2;s++){const sx=s?0.12:-0.12,sw=walk*Math.sin(ph+s*Math.PI)*0.25;const hip=V(sx,by-0.05,0),knee=V(sx,lerp(0.42,0.2,sit),lerp(0.15+sw*0.5,0.3,sit)),foot=V(sx,0.04,lerp(sw,0.35,sit));pin(thighs[s],hip,knee);pin(shins[s],knee,foot);pin(arms[s],V(sx*1.4,by+0.1,0.28),V(sx*1.6,by-0.05,0.42))}
+    const wag=Math.sin(t*(sit?6:2))*(sit?0.35:0.25); poseChain(tail,V(0,by+0.02,-0.4),V(wag,lerp(by+0.1,0.15,sit),-1.3),0.05,wag*0.4);
+    const e=tail.balls[tail.balls.length-1].position; tip.forEach((c,i)=>{c.position.set(e.x+(i-1)*0.05,e.y,e.z-0.08);c.rotation.x=-Math.PI/2-0.2})
+  }};
+}
+function makePtero(){
+  const g=new THREE.Group(); scene.add(g); const m=lam('#8a5f4a'), wingM=new THREE.MeshLambertMaterial({color:'#b47a5a',side:THREE.DoubleSide});
+  ell(0.35,0.3,0.9,m,0,0,0,g); const head=ell(0.25,0.25,0.4,m,0,0.15,1.0,g); cone(0.12,1.1,lam('#d9c08a'),0,0.12,1.7,g).rotation.x=Math.PI/2; cone(0.12,0.8,lam('#c4553a'),0,0.35,0.6,g).rotation.x=-2.2;
+  const wg=new THREE.BufferGeometry(); wg.setAttribute('position',new THREE.Float32BufferAttribute([0,0,0.6, 0,0,-0.5, 3.6,0,-0.2],3)); wg.computeVertexNormals();
+  const wings=[new THREE.Mesh(wg,wingM),new THREE.Mesh(wg,wingM)]; wings[1].scale.x=-1; wings.forEach(w=>g.add(w));
+  return {g,update(t,off){const f=Math.sin(t*5+off)*0.5;wings[0].rotation.z=f;wings[1].rotation.z=-f}};
+}
+function makeMammal(){const g=new THREE.Group();scene.add(g);const m=lam('#7a5c42');ell(0.12,0.1,0.16,m,0,0.1,0,g);const h=ell(0.08,0.07,0.09,m,0,0.15,0.14,g);
+  [-1,1].forEach(s=>{ell(0.03,0.04,0.015,lam('#c98a7a'),s*0.05,0.22,0.12,g);ell(0.015,0.015,0.01,EYE,s*0.035,0.17,0.22,g)});ell(0.015,0.015,0.015,lam('#3a2420'),0,0.15,0.235,g);return {g}}
+function makePigeon(){
+  const g=new THREE.Group(); scene.add(g); const m=lam('#8d93a3'), dark=lam('#5d6272');
+  ell(0.12,0.11,0.18,m,0,0.13,0,g); ell(0.09,0.03,0.12,dark,0,0.12,-0.2,g);
+  const hg=new THREE.Group(); hg.position.set(0,0.24,0.1); g.add(hg);
+  ell(0.06,0.06,0.065,m,0,0.02,0.02,hg); const ring=mesh(new THREE.TorusGeometry(0.06,0.025,8,16),new THREE.MeshLambertMaterial({color:'#5f9c7a',emissive:'#2a3a6a',emissiveIntensity:0.4}),hg); ring.rotation.x=Math.PI/2; ring.position.y=-0.05;
+  cone(0.012,0.05,lam('#e2c9a6'),0,0.01,0.1,hg).rotation.x=Math.PI/2; [-1,1].forEach(s=>{ell(0.014,0.014,0.01,lam('#e8762e'),s*0.04,0.035,0.06,hg);ell(0.007,0.007,0.005,EYE,s*0.043,0.035,0.068,hg)});
+  [-1,1].forEach(s=>{const l=capsule(0.008,lam('#d9787a'),g);pin(l,V(s*0.04,0.05,0.02),V(s*0.045,0,0.03))});
+  return {g,hg};
+}
+function makePlane(){const g=new THREE.Group();scene.add(g);const m=lam('#f2f2f4');const f=capsule(1.8,m,g);pin(f,V(-14,0,0),V(14,0,0));
+  box(8,0.3,30,m,1,-0.4,0,g);box(4,0.25,10,m,-12,0.4,0,g);box(4,5,0.3,lam('#2f5f9e'),-12.5,2.6,0,g);
+  for(let i=0;i<14;i++){box(0.5,0.45,0.05,lam('#24313f'),-9+i*1.4,0.5,1.78,g);box(0.5,0.45,0.05,lam('#24313f'),-9+i*1.4,0.5,-1.78,g)}
+  ell(1.6,1.4,1.6,lam('#24313f'),13.2,0.6,0,g).scale.set(1.2,0.6,1.3);return {g}}
+
+/* ---------- places ---------- */
+const space=new THREE.Group(); space.position.copy(SP); scene.add(space);
+{const eg=new THREE.IcosahedronGeometry(3000,4).toNonIndexed(),pos=eg.attributes.position,cols=[],v=new THREE.Vector3();
+ for(let i=0;i<pos.count;i+=3){v.set(0,0,0);for(let k=0;k<3;k++)v.add(new THREE.Vector3().fromBufferAttribute(pos,i+k));v.normalize();
+  const n=Math.sin(v.x*3.1+0.3)*Math.cos(v.y*2.7)+Math.sin(v.z*4.3+v.x*2)*0.6;const c=new THREE.Color(n>0.45?(n>0.95?'#b59a5a':'#4f8f3f'):'#2a62a8');for(let k=0;k<3;k++)cols.push(c.r,c.g,c.b)}
+ eg.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));eg.computeVertexNormals();space.add(new THREE.Mesh(eg,new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true})));
+ space.add(new THREE.Mesh(new THREE.SphereGeometry(3110,48,32),new THREE.MeshBasicMaterial({color:'#7fb6ff',transparent:true,opacity:0.14,side:THREE.BackSide,depthWrite:false})));
+ const sp=[];for(let i=0;i<1600;i++){const a=rng()*Math.PI*2,b=Math.acos(rng()*2-1),r=40000;sp.push(r*Math.sin(b)*Math.cos(a),r*Math.cos(b),r*Math.sin(b)*Math.sin(a))}
+ const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.Float32BufferAttribute(sp,3));space.add(new THREE.Points(sg,new THREE.PointsMaterial({color:'#ffffff',size:2,sizeAttenuation:false})))}
+const rockG=new THREE.IcosahedronGeometry(1,1); const rock=new THREE.Mesh(rockG,new THREE.MeshLambertMaterial({color:'#7a6a5c',flatShading:true})); scene.add(rock);
+const rockGlow=new THREE.Mesh(new THREE.SphereGeometry(1,16,12),new THREE.MeshBasicMaterial({color:'#ffcf8a',transparent:true,opacity:0.25,depthWrite:false,blending:THREE.AdditiveBlending})); scene.add(rockGlow);
+
+const valley=new THREE.Group(); scene.add(valley);
+box(4000,1,4000,lam('#7ea456'),0,-0.5,0,valley);
+box(900,0.3,40,lam('#3f86b0'),0,0.02,-90,valley);
+const fernI=new THREE.InstancedMesh(CONE,new THREE.MeshLambertMaterial(),420); fernI.frustumCulled=false; valley.add(fernI);
+{const d=new THREE.Object3D();for(let i=0;i<420;i++){const a=rng()*Math.PI*2,r=12+rng()*380;let x=Math.cos(a)*r,z=Math.sin(a)*r;if(Math.abs(z-20)<14&&Math.abs(x)<60)z+=30;d.position.set(x,1,z);const s=1+rng()*2;d.scale.set(s,2+rng()*3,s);d.updateMatrix();fernI.setMatrixAt(i,d.matrix);fernI.setColorAt(i,new THREE.Color(['#4f8a3a','#5f9a44','#3f7a34','#6fa64e'][i%4]))}}
+for(let i=0;i<46;i++){const a=rng()*Math.PI*2,r=30+rng()*300,x=Math.cos(a)*r,z=Math.sin(a)*r-30;if(Math.abs(x)<25&&z>0&&z<50)continue;const h=10+rng()*8,tr=capsule(0.5,lam('#7a5a3a'),valley);pin(tr,V(x,0,z),V(x+1.5,h,z));
+  for(let k=0;k<7;k++){const a2=k/7*Math.PI*2,l=ell(3.2,0.35,1.1,lam('#4f9a3c'),x+1.5+Math.cos(a2)*2.6,h-0.6,z+Math.sin(a2)*2.6,valley);l.rotation.y=-a2;l.rotation.z=0.35}}
+const volcano=cone(420,380,lam('#5a4a44'),-380,190,-1100,valley); cone(110,60,lam('#3a2a26'),-380,385,-1100,valley);
+const smokeP=[]; for(let i=0;i<10;i++) smokeP.push(ell(60,50,60,lam('#9a9090'),-380,420+i*60,-1100,valley));
+for(let i=0;i<8;i++) cone(300+rng()*200,200+rng()*200,lam('#6f8a6a'),-1400+i*400,120,-1500,valley);
+const burrow=ell(1.2,0.5,1.2,lam('#6a5236'),5,0,30,valley); ell(0.18,0.05,0.18,lam('#2a1e14'),5,0.42,30.2,valley);
+
+const city=new THREE.Group(); city.position.set(CX,0,0); scene.add(city);
+box(1600,1,1600,lam('#7d8b77'),0,-0.5,0,city); box(1600,0.2,16,lam('#3e4047'),0,0.02,0,city); box(1600,0.25,5,lam('#b9b6ad'),0,0.05,10.5,city); box(1600,0.25,5,lam('#b9b6ad'),0,0.05,-10.5,city);
+for(let x=-800;x<800;x+=6) box(3,0.21,0.3,lam('#e9e6dc'),x,0.06,0,city);
+const wcv=document.createElement('canvas'); wcv.width=64; wcv.height=128;
+{const s=wcv.getContext('2d');s.fillStyle='#e8e2d6';s.fillRect(0,0,64,128);for(let y=4;y<128;y+=10)for(let x=4;x<64;x+=10){s.fillStyle='#6b8296';s.fillRect(x,y,6,6)}}
+const wtex=new THREE.CanvasTexture(wcv); wtex.magFilter=THREE.NearestFilter;
+const BB=new THREE.BoxGeometry(1,1,1); BB.translate(0,0.5,0);
+const towers=[]; for(let i=0;i<220;i++){const side=i%2?1:-1;const row=Math.floor(i/2);const x=-400+row*7.5+(rng()-0.5)*2;const z=side*(22+rng()*6+(row%4)*28);towers.push([x,z,10+rng()*8,12+rng()*(Math.abs(z)<40?60:110)])}
+for(let i=0;i<200;i++){const a=rng()*Math.PI*2,r=120+rng()*600;towers.push([Math.cos(a)*r,Math.sin(a)*r+(Math.sin(a)>0?60:-60),18+rng()*14,30+rng()*160])}
+const tI=new THREE.InstancedMesh(BB,new THREE.MeshLambertMaterial({map:wtex}),towers.length); tI.frustumCulled=false; tI.castShadow=true; tI.receiveShadow=true; city.add(tI);
+{const d=new THREE.Object3D();towers.forEach(([x,z,w,h],i)=>{d.position.set(x,0,z);d.scale.set(w,h,w*0.8);d.updateMatrix();tI.setMatrixAt(i,d.matrix);tI.setColorAt(i,new THREE.Color(['#f0e6d8','#d8e2ea','#e8d2c4','#cfd8cf','#f3eadb'][i%5]))})}
+const CARS=['#c0392b','#2e86c1','#f4f4f2','#27323f','#e2a72e','#5b8c5a'];
+for(let i=0;i<12;i++){const lane=i%2?3.2:-3.2,x=(i%2?1:-1)*(16+Math.floor(i/2)*7);const cg=new THREE.Group();city.add(cg);cg.position.set(x,0,lane);
+  const b=capsule(0.9,lam(CARS[i%6]),cg);pin(b,V(-1.4,0.85,0),V(1.4,0.85,0));b.g.scale.z=0.95;ell(1.3,0.6,0.8,lam('#2a3a4a'),0,1.45,0,cg);
+  [-1.3,1.3].forEach(wx=>[-0.85,0.85].forEach(wz=>{const w=mesh(CYL,lam('#1b1b1e'),cg);w.scale.set(0.38,0.25,0.38);w.rotation.x=Math.PI/2;w.position.set(wx,0.38,wz)}))}
+const pole=capsule(0.12,lam('#30343a'),city); pin(pole,V(-6,0,9),V(-6,6,9)); box(0.5,1.4,0.5,lam('#22262b'),-6,6.4,9.2,city); ell(0.16,0.16,0.08,new THREE.MeshBasicMaterial({color:'#ff4a3a'}),-6,6.85,9.48,city);
+const ledge=box(3,0.25,0.9,lam('#cfc6b6'),-12,20,26,city);
+const clouds=[]; for(let i=0;i<40;i++){const c=ell(18+rng()*20,6+rng()*4,14+rng()*12,lam('#ffffff'),-300+rng()*600,200+rng()*90,-250+rng()*400,city);c.castShadow=false;clouds.push(c)}
+
+const farm=new THREE.Group(); farm.position.set(FX,0,0); scene.add(farm);
+box(3000,1,3000,lam('#a6b25a'),0,-0.5,0,farm);
+for(let x=-30;x<=30;x+=3){box(0.18,1.3,0.18,lam('#8a6a48'),x,0.65,-12,farm)} box(60,0.12,0.1,lam('#8a6a48'),0,1.0,-12,farm); box(60,0.12,0.1,lam('#8a6a48'),0,0.55,-12,farm);
+const barn=new THREE.Group(); barn.position.set(-18,0,-26); farm.add(barn); box(12,7,10,lam('#b0372d'),0,3.5,0,barn); const roof=mesh(new THREE.CylinderGeometry(7.6,7.6,10.4,3),lam('#4a3a36'),barn); roof.rotation.set(Math.PI/2,0,Math.PI/2); roof.position.y=8.5; roof.scale.set(1,1,0.55); box(3.2,4,0.2,lam('#f2ede4'),0,2,5.05,barn);
+for(let i=0;i<30;i++){const a=rng()*Math.PI*2,r=60+rng()*400;const x=Math.cos(a)*r,z=Math.sin(a)*r;const tr=capsule(0.35,lam('#6b4f36'),farm);pin(tr,V(x,0,z),V(x,4,z));ell(2.6,2.4,2.6,lam(['#5d8f45','#6f9e4f'][i%2]),x,5.4,z,farm)}
+for(let i=0;i<6;i++) ell(220,60,160,lam('#8fa65a'),-600+i*250,0,420+rng()*80,farm);
+const lounge=new THREE.Group(); lounge.position.set(LX,0,0); scene.add(lounge);
+box(8,0.1,8,lam('#a9805a'),0,-0.05,0,lounge); box(8,3,0.1,lam('#d9c9a8'),0,1.5,-1.6,lounge); box(0.1,3,8,lam('#cbb894'),-3.5,1.5,1,lounge);
+const sofa=new THREE.Group(); sofa.position.set(0,0,-0.9); lounge.add(sofa); box(2.6,0.45,0.95,lam('#3f6f8f'),0,0.3,0,sofa); box(2.6,0.6,0.3,lam('#3f6f8f'),0,0.75,-0.35,sofa); ell(0.2,0.32,0.5,lam('#355f7c'),-1.3,0.6,0,sofa); ell(0.2,0.32,0.5,lam('#355f7c'),1.3,0.6,0,sofa);
+box(1.4,1,0.05,new THREE.MeshBasicMaterial({color:'#ffd7a0'}),1.6,1.7,-1.54,lounge); const lampG=new THREE.Group(); lampG.position.set(-1.9,0,-1); lounge.add(lampG); const lp=capsule(0.03,lam('#2a2a2a'),lampG); pin(lp,V(0,0,0),V(0,1.5,0)); ell(0.25,0.22,0.25,new THREE.MeshBasicMaterial({color:'#ffe2b0'}),0,1.6,0,lampG);
+const lampLight=new THREE.PointLight('#ffc98a',1.3,8,2); lampLight.position.set(LX-1.9,1.6,-0.8); scene.add(lampLight);
+box(2.2,0.02,1.4,lam('#c97a5a'),0,0.01,0.8,lounge);
+
+/* ---------- cast ---------- */
+const trex=makeTRex(), sauros=[makeSauropod('#7c8a5c'),makeSauropod('#6f7f60'),makeSauropod('#86906a'),makeSauropod('#7a8566')];
+const trikes=[0,1,2,3,4].map(()=>makeTrike()), raptor=makeRaptor(), pteros=[makePtero(),makePtero(),makePtero()], mammal=makeMammal(), pigeon=makePigeon(), plane=makePlane();
+const dino=makeHuman({skin:'#5f8a4c',shirt:'#5f8a4c',pants:'#5f8a4c',bigEyes:true,shoe:'#5f8f4a'});
+const kid=makeHuman({skin:'#c98e63',shirt:'#f2b632',pants:'#3a5f8f',hair:'#2a1d14',scale:0.72,shoe:'#e9e9ef'});
+const farmer=makeHuman({skin:'#a8704b',shirt:'#5b7fa8',pants:'#4a3f36',cap:'#c9a24a'});
+const crowd=[['#e7c19c','#d6453d','#34507e','#1d1712',0],['#c68e63','#f1f0ea','#3b3b42','#2a1d14',1],['#e7c19c','#2f8f85','#2e3440','#5a3a24',1],['#a8704b','#e0a63a','#5a4d7a','#141414',0],['#d9a77f','#7a3b8c','#2b2f38','#3b2a1c',1],['#f0cfb0','#3a6ea5','#c9b48f','#1d1712',0]]
+  .map(([skin,shirt,pants,hair,long])=>makeHuman({skin,shirt,pants,hair,long}));
+
+/* ---------- story beats ---------- */
+const fmt=n=>Math.round(n).toLocaleString('en-US');
+const SC=[
+  {t0:0,t1:6,sub:'The asteroid misses',cap:'66 million years ago, the asteroid misses.'},
+  {t0:6,t1:12,sub:'+1 million years',cap:'Dinosaurs keep ruling the planet.'},
+  {t0:12,t1:17,sub:'+10 million years',cap:'Mammals stay tiny, hiding underground.'},
+  {t0:17,t1:23,sub:'+60 million years · the “dinosauroid”',cap:'Scientists once imagined dinosaurs evolving into this.'},
+  {t0:23,t1:28,sub:'Today · an alternate Earth',cap:'Would humans even exist? Probably not. But imagine we did.'},
+  {t0:28,t1:34,sub:'Today · rush hour',cap:'Traffic stops for a 40-ton crossing.'},
+  {t0:34,t1:40,sub:'Today · the countryside',cap:'Farms raise Triceratops instead of cows.'},
+  {t0:40,t1:46,sub:'Today · at home',cap:'Your dog? A feathered raptor.'},
+  {t0:46,t1:52,sub:'Today · 30,000 feet',cap:'Airports chase off pterosaurs, not birds.'},
+  {t0:52,t1:58,sub:'Today · sunset',cap:'The world would feel a lot bigger.'},
+  {t0:58,t1:63,sub:'Today · our real world',cap:'Plot twist: birds are dinosaurs. They never left.'},
+  {t0:63,t1:70,card:true}
+];
+// camera per scene: from, to, look from, look to, focus distance, aperture
+const SHOTS=[
+  null,
+  [[-22,6,46],[-6,5,38],[0,5,0],[6,5,0],40,0.00012],
+  [[7.6,0.5,35.5],[7.0,0.45,34.6],[5,0.25,30],[5,0.25,30],5.2,0.0012],
+  [[0.4,1.75,24.6],[0.1,1.65,23.5],[0,1.45,20],[0,1.45,20],4,0.0014],
+  [[CX-320,70,430],[CX-250,58,360],[CX,40,0],[CX,40,0],420,0.00002],
+  [[CX-28,3,17],[CX-22,2.6,14.5],[CX,8,-2],[CX,8,-2],25,0.00025],
+  [[FX-18,3,22],[FX-14,2.8,19],[FX,1.5,0],[FX,1.5,0],21,0.00028],
+  [[LX,1.3,4.2],[LX+0.2,1.2,3.6],[LX,0.85,-0.6],[LX,0.85,-0.6],4.2,0.0016],
+  null,
+  [[FX+40.2,1.5,55.6],[FX+40.3,1.45,56.2],[FX+40.5,4,200],[FX+40.5,4.5,200],4.2,0.0004],
+  null,null
+];
+const ENV={
+  space:{bg:'#02040a',sky:'#9fb4ff',gnd:'#0a0c14',hi:0.5,sun:'#ffffff',si:1.3,fog:[1e6,2e6]},
+  jungle:{bg:'#b8d8c0',sky:'#fff3d8',gnd:'#4f6a3a',hi:0.62,sun:'#ffe2b0',si:0.75,fog:[150,1600]},
+  day:{bg:'#a8d0ec',sky:'#f2f8ff',gnd:'#66705a',hi:0.62,sun:'#fff3dc',si:0.72,fog:[250,1800]},
+  home:{bg:'#2a2230',sky:'#ffe3c4',gnd:'#4a3a30',hi:0.55,sun:'#ffcf9a',si:0.35,fog:[20,60]},
+  sky:{bg:'#8fc4f0',sky:'#ffffff',gnd:'#7b8a9a',hi:0.65,sun:'#ffffff',si:0.6,fog:[400,2400]},
+  sunset:{bg:'#f2a067',sky:'#ffcf9a',gnd:'#5a3f3a',hi:0.6,sun:'#ff9a5a',si:0.7,fog:[120,900]}
+};
+function applyEnv(e){scene.background.set(e.bg);scene.fog.color.set(e.bg);scene.fog.near=e.fog[0];scene.fog.far=e.fog[1];hemi.color.set(e.sky);hemi.groundColor.set(e.gnd);hemi.intensity=e.hi;sun.color.set(e.sun);sun.intensity=e.si}
+const look=new THREE.Vector3(), Va=a=>new THREE.Vector3(a[0],a[1],a[2]);
+
+/* ---------- per-frame state, a pure function of t ---------- */
+function update(t){
+  let si=SC.findIndex(s=>t>=s.t0&&t<s.t1); if(si<0) si=SC.length-1;
+  const s=SC[si], k=(t-s.t0)/(s.t1-s.t0);
+  const showCity=[4,5,8,10,11].includes(si), showFarm=si===6||si===9;
+  space.visible=rock.visible=rockGlow.visible=si===0; valley.visible=si>=1&&si<=3; city.visible=showCity; farm.visible=showFarm; lounge.visible=si===7; lampLight.visible=si===7;
+  // everyone hidden unless a scene places them
+  [trex.g,...sauros.map(d=>d.g),...trikes.map(d=>d.g),raptor.g,...pteros.map(d=>d.g),mammal.g,pigeon.g,plane.g,dino.g,kid.g,farmer.g,...crowd.map(c=>c.g)].forEach(g=>g.visible=false);
+  clouds.forEach(c=>c.visible=si===8);
+
+  // environment and camera
+  applyEnv(si===0?ENV.space:si<=3?ENV.jungle:si===7?ENV.home:si===8?ENV.sky:si===9?ENV.sunset:ENV.day);
+  camera.near=si===10?0.02:si===7||si===2||si===3?0.05:0.5; camera.far=si===0?90000:4000; camera.fov=si===10?40:55;
+  bokeh.enabled=si!==0&&si!==11; let focus=10, ap=0.0003;
+  if(si===0){
+    camera.position.copy(SP).add(V(-1800,1400,9500)); look.copy(SP).add(V(400,200,0)); camera.lookAt(look);
+    const e=t/6; rock.position.copy(SP).add(V(lerp(-6500,5200,e),lerp(2600,3600,e),lerp(5200,3200,e))); rock.scale.setScalar(150); rock.rotation.set(t,t*0.7,0);
+    rockGlow.position.copy(rock.position); rockGlow.scale.setScalar(320);
+  } else if(si===8){
+    plane.g.visible=true; plane.g.position.set(CX-60+(t-46)*22,250,0);
+    camera.position.set(CX-170+(t-46)*14,262,95); look.copy(plane.g.position).add(V(-20,0,0)); camera.lookAt(look); focus=camera.position.distanceTo(look); ap=0.00004;
+    pteros.forEach((p,i)=>{p.g.visible=true;p.g.position.set(plane.g.position.x-40+i*14+Math.sin(t+i)*3,250+i*5+Math.sin(t*1.3+i)*2,24+i*9);p.g.rotation.y=Math.PI/2;p.g.scale.setScalar(2.2);p.update(t,i)});
+  } else if(si>=10){
+    const P0=V(CX-12,20.13,26); pigeon.g.visible=true; pigeon.g.position.copy(P0).add(V(0.2*Math.sin(t*0.8),0,0)); pigeon.g.rotation.y=-0.4+0.3*Math.sin(t*0.5);
+    pigeon.hg.position.z=0.1+0.04*Math.max(0,Math.sin(t*6)); pigeon.hg.rotation.y=Math.sin(t*1.7)*0.5;
+    camera.position.copy(P0).add(V(-1.25+(si===11?-0.2:0),0.32,0.85)); look.copy(P0).add(V(0.1,0.17,0)); camera.lookAt(look); focus=camera.position.distanceTo(look); ap=0.006;
+  } else {
+    const sh=SHOTS[si], e=sm(k); camera.position.copy(Va(sh[0]).lerp(Va(sh[1]),e)); look.copy(Va(sh[2]).lerp(Va(sh[3]),e)); camera.lookAt(look); focus=sh[4]; ap=sh[5];
+  }
+  camera.updateProjectionMatrix();
+  bokeh.uniforms.focus.value=focus; bokeh.uniforms.aperture.value=ap; bokeh.uniforms.maxblur.value=0.007;
+  bokeh.uniforms.nearClip.value=camera.near; bokeh.uniforms.farClip.value=camera.far; bokeh.uniforms.aspect.value=camera.aspect;
+  sun.castShadow=si>=1&&si<=10&&si!==8;
+  sun.target.position.copy(look); sun.position.copy(look).add(si===9?V(-40,25,-60):V(30,60,25));
+  const ext=si===4?400:si===1?60:si===5||si===6?40:12; Object.assign(sun.shadow.camera,{left:-ext,right:ext,top:ext,bottom:-ext,near:0.5,far:300}); sun.shadow.camera.updateProjectionMatrix();
+
+  // the valley: T-rex walks, long-necks graze behind, a mammal hides, the dinosauroid stares
+  if(si>=1&&si<=3){
+    smokeP.forEach((p,i)=>{p.position.y=420+((i*60+t*12)%600);p.position.x=-380+Math.sin(t*0.2+i)*40});
+    if(si===1){trex.g.visible=true;const x=lerp(-30,22,k);trex.g.position.set(x,0,8);trex.g.rotation.y=Math.PI/2-0.25;trex.update(t,t*3.2,1,t>9.6&&t<11?sm((t-9.6)/0.3)*(1-sm((t-10.7)/0.3)):0)}
+    if(si===2){trex.g.visible=true;trex.g.position.set(lerp(-6,16,sm((t-12.4)/4)),0,26.5);trex.g.rotation.y=Math.PI/2;trex.update(t,t*3.2,1,0);
+      mammal.g.visible=true;const up=t<14.4?sm((t-12.4)/0.6):t<15.8?1-sm((t-14.4)/0.25):sm((t-15.8)/0.5);mammal.g.position.set(5,0.25+0.22*up,30.25);mammal.g.rotation.y=-0.6}
+    if(si===3){dino.g.visible=true;dino.g.position.set(0,0,20);dino.g.rotation.y=0;dino.head.rotation.set(0,Math.sin(t*0.8)*0.2,Math.sin(t*1.2)*0.08);poseHuman(dino,{handR:t>19?V(-0.3,1.25+0.1*Math.sin(t*6),0.25):null})}
+    sauros.forEach((d,i)=>{d.g.visible=si===1;const z=-70-i*30,x=-120+i*60+(t-6)*1.5;d.g.position.set(x,0,z);d.g.rotation.y=Math.PI/2;d.update(t+i,t*1.4+i,1)});
+  }
+  // the city: a long-neck crosses the road while traffic waits and people look up
+  if(si===4||si===5){
+    const d=sauros[0]; d.g.visible=true;
+    if(si===4){d.g.position.set(CX+40,0,lerp(-70,-40,k));d.g.rotation.y=0}
+    else{d.g.position.set(CX+2,0,lerp(-26,6,k));d.g.rotation.y=0}
+    d.update(t,t*1.6,1);
+    crowd.forEach((c,i)=>{if(si!==5)return;c.g.visible=true;c.g.position.set(CX-14+i*1.9,0.15,9.2+(i%2)*1.2);c.g.rotation.y=Math.PI-0.15*(i-2.5)*0.4;c.head.rotation.x=-0.45-0.1*Math.sin(t+i);
+      poseHuman(c,{handR:i%3===0?V(-0.25,1.75,0.2):null,handL:i===4?V(0.2,1.35,0.25):null})});
+  }
+  // the farm: a herd of Triceratops and their farmer
+  if(si===6){
+    trikes.forEach((d,i)=>{d.g.visible=true;const x=-10+i*5.5,z=-3+(i%2)*5+Math.sin(i)*2;d.g.position.set(FX+x+(t-34)*0.3,0,z);d.g.rotation.y=0.6+i*0.4;d.update(t,t*2+i,0.3,0.5+0.5*Math.sin(t*0.8+i))});
+    farmer.g.visible=true;farmer.g.position.set(FX-6+(t-34)*0.6,0,8);farmer.g.rotation.y=Math.PI/2;poseHuman(farmer,{walk:1,ph:t*6,handR:V(-0.32,1.0,0.35)});
+  }
+  // home: a kid on the sofa with a feathered pet raptor
+  if(si===7){
+    kid.g.visible=true; kid.g.position.set(LX-0.45,-0.08,-0.75); kid.g.rotation.y=0.2; kid.head.rotation.set(0,0.35,0);
+    poseHuman(kid,{sit:1,handL:V(0.42,1.05+0.05*Math.sin(t*4),0.35)});
+    raptor.g.visible=true; raptor.g.position.set(LX+0.35,0.5,-0.7); raptor.g.rotation.y=-0.35; raptor.update(t,0,0,1,t>42.5&&t<44.5?0.45*Math.sin((t-42.5)*Math.PI/2):0);
+  }
+  // sunset: the kid and the raptor watch a herd of long-necks
+  if(si===9){
+    kid.g.visible=true; kid.g.position.set(FX+40,-0.3,60); kid.g.rotation.y=0; kid.head.rotation.set(-0.1,0,0); poseHuman(kid,{sit:1});
+    raptor.g.visible=true; raptor.g.position.set(FX+40.9,0,60.1); raptor.g.rotation.y=0; raptor.update(t,0,0,1,0.2);
+    sauros.forEach((d,i)=>{d.g.visible=true;d.g.position.set(FX-60+i*45+(t-52)*2,0,220+i*14);d.g.rotation.y=Math.PI/2;d.update(t+i,t*1.4+i,1)});
+  }
+  return si;
+}
+
+/* ---------- captions, drawn into the frame and kept inside the app safe zone ---------- */
+const SERIF='Newsreader, Georgia, serif', MONO='"IBM Plex Mono", Consolas, monospace';
+function txt(s,x,y,font,color,o={}){
+  g2.save(); g2.globalAlpha=o.alpha==null?1:o.alpha; g2.font=font; g2.letterSpacing=(o.ls||0)+'px';
+  g2.fillStyle=color; g2.textAlign=o.align||'left'; g2.textBaseline='middle';
+  if(o.shadow!==false){g2.shadowColor='rgba(0,0,0,.7)';g2.shadowBlur=o.blur||10;g2.shadowOffsetY=2}
+  g2.fillText(s,x,y); g2.restore();
+}
+function wrapText(s,font,maxW){g2.font=font;const out=[];let cur='';for(const w of s.split(' ')){const tr=cur?cur+' '+w:w;if(g2.measureText(tr).width>maxW&&cur){out.push(cur);cur=w}else cur=tr}if(cur)out.push(cur);return out}
+function drawOverlay(t,si){
+  const Wd=view.width, Hd=view.height, U=Wd/100, s=SC[si];
+  // the headline lives only on the opening shot and the end card, mid-frame
+  const ha=si===0?sm((t-0.3)/0.6)*(1-sm((t-5.3)/0.6)):0;
+  if(ha>0.01){const f='400 '+6.8*U+'px '+SERIF;wrapText('What if dinosaurs never went extinct?',f,Wd*0.74).forEach((l,i,a)=>txt(l,Wd*0.47,Hd*0.42+(i-(a.length-1)/2)*8*U,f,PAPER,{align:'center',alpha:ha,blur:16}))}
+  // the counter, mid-left, from the second scene on
+  if(si>=1&&si<=10){
+    const a=sm((t-6)/0.5), x=Wd*0.065; let y=Hd*0.47;
+    const yrs=si<4?66e6*Math.pow(clamp01((t-6)/17),2.2):66e6;
+    txt('YEARS SINCE THE ASTEROID MISSED',x,y,'600 '+2.1*U+'px '+MONO,PAPER,{ls:0.32*U,alpha:a}); y+=5.6*U;
+    txt(fmt(yrs),x,y,'400 '+8.4*U+'px '+SERIF,PAPER,{alpha:a}); y+=5.4*U;
+    txt(s.sub.toUpperCase(),x,y,'600 '+2.0*U+'px '+MONO,PAPER,{ls:0.3*U,alpha:a*sm((t-s.t0)/0.4)});
+  }
+  // one italic line per scene
+  if(s.cap&&si>=1){const a=sm((t-s.t0-0.3)/0.4)*(1-sm((t-(s.t1-0.35))/0.3));const f='italic 400 '+4.4*U+'px '+SERIF;
+    wrapText(s.cap,f,Wd*0.7).forEach((l,i,arr)=>txt(l,Wd*0.46,Hd*0.635+(i-(arr.length-1)/2)*5.4*U,f,PAPER,{align:'center',alpha:a,blur:14}))}
+  if(si===0){const a=sm((t-1.2)/0.5)*(1-sm((t-5.5)/0.4));const f='italic 400 '+4.4*U+'px '+SERIF;txt(s.cap,Wd*0.46,Hd*0.635,f,PAPER,{align:'center',alpha:a,blur:14})}
+  // end card with the takeaway and a share prompt
+  const ca=0.82*sm((t-63)/0.8);
+  if(ca>0.002){
+    g2.fillStyle='rgba(10,12,9,'+ca+')'; g2.fillRect(0,0,Wd,Hd);
+    const a1=sm((t-63.4)/0.6), a2=sm((t-64.6)/0.6), a3=sm((t-66)/0.6), cx=Wd*0.47;
+    const f1='400 '+6.6*U+'px '+SERIF; wrapText('What if dinosaurs never went extinct?',f1,Wd*0.74).forEach((l,i,a)=>txt(l,cx,Hd*0.36+(i-(a.length-1)/2)*7.8*U,f1,PAPER,{align:'center',alpha:a1}));
+    const f2='500 '+2.1*U+'px '+MONO; txt('BIRDS ARE DINOSAURS.',cx,Hd*0.45,f2,LEAF,{align:'center',ls:0.3*U,alpha:a2}); txt('THE NEXT ONE YOU SEE IS A SURVIVOR.',cx,Hd*0.475,f2,PAPER,{align:'center',ls:0.3*U,alpha:a2});
+    // share arrow drawn as a simple path
+    g2.save(); g2.globalAlpha=a3; g2.strokeStyle=PAPER; g2.lineWidth=0.6*U; g2.lineCap=g2.lineJoin='round';
+    const ax=cx, ay=Hd*0.545; g2.beginPath(); g2.moveTo(ax-2.6*U,ay+1.6*U); g2.quadraticCurveTo(ax-2.4*U,ay-1.4*U,ax+1.6*U,ay-1.4*U); g2.stroke();
+    g2.beginPath(); g2.moveTo(ax+0.2*U,ay-3*U); g2.lineTo(ax+2*U,ay-1.4*U); g2.lineTo(ax+0.2*U,ay+0.2*U); g2.stroke(); g2.restore();
+    txt('SEND THIS TO SOMEONE',cx,Hd*0.585,'600 '+2.1*U+'px '+MONO,PAPER,{align:'center',ls:0.3*U,alpha:a3});
+    txt('WHO STILL LOVES DINOSAURS.',cx,Hd*0.61,'600 '+2.1*U+'px '+MONO,PAPER,{align:'center',ls:0.3*U,alpha:a3});
+    txt('A THOUGHT EXPERIMENT · NOT A PREDICTION',cx,Hd*0.7,'400 '+1.7*U+'px '+MONO,PAPER,{align:'center',ls:0.2*U,alpha:a3*0.6});
+  }
+}
+function drawFrame(t){
+  const si=update(t); composer.render();
+  g2.globalAlpha=1; g2.drawImage(renderer.domElement,0,0,view.width,view.height);
+  drawOverlay(t,si);
+}
+
+/* ---------- soundtrack: synthesized offline once, then played in sync with the timeline ---------- */
+function buildScore(){
+  const SR=44100, c=new OfflineAudioContext(2,SR*DUR,SR), R=rngFrom(91);
+  const master=c.createGain(); master.gain.value=0.8;
+  const comp=c.createDynamicsCompressor(); comp.threshold.value=-16; comp.ratio.value=4; master.connect(comp); comp.connect(c.destination);
+  const len=SR*2.8, ir=c.createBuffer(2,len,SR);
+  for(let ch=0;ch<2;ch++){const d=ir.getChannelData(ch);for(let i=0;i<len;i++)d[i]=(R()*2-1)*Math.pow(1-i/len,2.6)}
+  const rev=c.createConvolver(); rev.buffer=ir; const wet=c.createGain(); wet.gain.value=0.3; rev.connect(wet); wet.connect(master);
+  const nb=c.createBuffer(1,SR*2,SR), nd=nb.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=R()*2-1;
+  const out=(node,w=true)=>{node.connect(master);if(w)node.connect(rev)};
+  const env=(g,t0,a,peak,dur)=>{g.gain.setValueAtTime(0.0001,t0);g.gain.exponentialRampToValueAtTime(peak,t0+a);g.gain.exponentialRampToValueAtTime(0.0001,t0+dur)};
+  const keys=(param,ks)=>{param.setValueAtTime(ks[0][1],0);ks.forEach(([t,v])=>param.linearRampToValueAtTime(v,t))};
+  const mf=m=>440*Math.pow(2,(m-69)/12);
+  function tone(t0,f,dur,o={}){const s=c.createOscillator();s.type=o.type||'sine';s.frequency.setValueAtTime(f,t0);if(o.glide)s.frequency.exponentialRampToValueAtTime(o.glide,t0+dur);
+    const g=c.createGain();env(g,t0,o.a||0.005,o.g||0.2,dur);let n=s;if(o.lp){const f2=c.createBiquadFilter();f2.frequency.value=o.lp;s.connect(f2);n=f2}n.connect(g);out(g,o.wet!==false);s.start(t0);s.stop(t0+dur+0.05)}
+  function nz(t0,dur,o={}){const s=c.createBufferSource();s.buffer=nb;s.loop=true;const f=c.createBiquadFilter();f.type=o.type||'bandpass';f.Q.value=o.q||1;f.frequency.setValueAtTime(o.f0||1000,t0);
+    if(o.f1)f.frequency.exponentialRampToValueAtTime(o.f1,t0+dur);const g=c.createGain();env(g,t0,o.a||0.005,o.g||0.2,dur);s.connect(f);f.connect(g);out(g,o.wet!==false);s.start(t0);s.stop(t0+dur+0.05)}
+  function layer(type,f0,q,gk){const s=c.createBufferSource();s.buffer=nb;s.loop=true;const f=c.createBiquadFilter();f.type=type;f.Q.value=q;f.frequency.value=f0;const g=c.createGain();s.connect(f);f.connect(g);out(g,false);keys(g.gain,gk);s.start(0)}
+  // music: a warm adventure theme, plucked arpeggios over soft pads, one chord per scene
+  const CH=[[50,57,62,66],[45,52,57,61],[47,54,59,62],[43,50,55,59],[45,52,57,61],[50,57,62,66],[43,50,55,59],[47,54,59,62],[45,52,57,61],[43,50,55,59],[50,57,62,66],[50,57,62,66]];
+  SC.forEach((s,i)=>{const ch=CH[i];ch.forEach(m=>tone(s.t0,mf(m),s.t1-s.t0+0.6,{type:'triangle',g:i===0?0.02:0.035,a:0.8,lp:1800}));
+    if(i>=1&&i<=10) for(let x=s.t0;x<s.t1-0.1;x+=0.25){const m=ch[[0,1,2,3,2,1][Math.round((x-s.t0)/0.25)%6]]+12;tone(x,mf(m),0.35,{type:'triangle',g:0.03})}});
+  [0,0.6,1.2,1.8].forEach((x,i)=>tone(0.3+x,mf([62,66,69,74][i]),2,{g:0.04}));
+  // space hush and the asteroid whooshing past
+  layer('lowpass',260,0.7,[[0,0],[0.4,0.04],[5.8,0.04],[6,0],[70,0]]); nz(1,4,{f0:300,f1:2500,q:0.7,g:0.12,a:2.5});
+  // jungle: insects and bird calls; T-rex footsteps and a roar
+  layer('highpass',5200,0.8,[[0,0],[6,0],[6.4,0.025],[22.8,0.025],[23,0],[70,0]]);
+  for(let i=0;i<40;i++){const x=6.5+R()*16;const f=1800+R()*1600;tone(x,f,0.12,{glide:f*1.4,g:0.02});tone(x+0.15,f*1.2,0.1,{glide:f*0.9,g:0.015})}
+  for(let x=6.4;x<16.4;x+=0.98){tone(x,55,0.5,{glide:30,g:x<12?0.4:0.6,wet:false});nz(x,0.2,{type:'lowpass',f0:300,g:0.15,wet:false})}
+  {const t0=9.6,o=c.createOscillator();o.type='sawtooth';o.frequency.setValueAtTime(110,t0);o.frequency.exponentialRampToValueAtTime(70,t0+1.2);const v=c.createOscillator();v.frequency.value=9;const vg=c.createGain();vg.gain.value=8;v.connect(vg);vg.connect(o.frequency);
+   const b1=c.createBiquadFilter();b1.type='bandpass';b1.frequency.value=420;b1.Q.value=2;const b2=c.createBiquadFilter();b2.type='bandpass';b2.frequency.value=900;b2.Q.value=3;const g=c.createGain();env(g,t0,0.15,0.45,1.4);
+   o.connect(b1);o.connect(b2);b1.connect(g);b2.connect(g);out(g);o.start(t0);v.start(t0);o.stop(t0+1.5);v.stop(t0+1.5);nz(t0,1.3,{f0:700,q:0.8,g:0.2,a:0.1})}
+  [12.6,14.45].forEach(x=>{tone(x,1800,0.08,{glide:2400,g:0.03});tone(x+0.1,2100,0.06,{g:0.02})});
+  tone(19.2,mf(76),0.5,{g:0.04});tone(19.5,mf(79),0.6,{g:0.04});
+  // city: traffic hum, a horn, footsteps of a 40-ton neighbour
+  layer('lowpass',500,0.6,[[0,0],[23,0],[23.4,0.05],[33.8,0.05],[34,0],[58,0],[58.3,0.035],[69,0.03],[70,0]]);
+  for(let x=28.4;x<34;x+=1.2){tone(x,48,0.7,{glide:26,g:0.7,wet:false});nz(x,0.3,{type:'lowpass',f0:250,g:0.2,wet:false})}
+  tone(29.3,420,0.4,{type:'square',g:0.035,lp:1500,wet:false});tone(29.3,525,0.4,{type:'square',g:0.03,lp:1500,wet:false});
+  // farm: low Triceratops grunts and birds
+  for(let i=0;i<5;i++){const x=34.6+i*1.1;tone(x,85+i*7,0.6,{type:'sawtooth',g:0.08,a:0.08,lp:400,glide:70})}
+  for(let i=0;i<10;i++){const x=34.5+R()*5;tone(x,2600+R()*800,0.1,{glide:3400,g:0.02})}
+  // home: cosy room tone, a raptor chirp when it tilts its head
+  layer('lowpass',300,0.6,[[0,0],[40,0],[40.3,0.03],[45.8,0.03],[46,0],[70,0]]);
+  [42.6,43.0,44.2].forEach(x=>{tone(x,1400,0.14,{glide:2200,g:0.05});tone(x+0.07,1900,0.1,{glide:1500,g:0.04})});
+  // sky: jet engine and pterosaur screeches
+  layer('bandpass',900,0.5,[[0,0],[46,0],[46.4,0.12],[51.8,0.12],[52,0],[70,0]]);
+  [47.5,49.6].forEach(x=>{tone(x,1600,0.5,{type:'sawtooth',glide:900,g:0.035,lp:3000})});
+  // sunset: distant long-neck calls, low and soft
+  [53.5,55.8].forEach(x=>tone(x,70,1.8,{type:'triangle',glide:55,g:0.15,a:0.4}));
+  // the twist: a pigeon coo
+  [58.8,60.6,62.1].forEach(x=>{const o=c.createOscillator();o.frequency.setValueAtTime(330,x);o.frequency.linearRampToValueAtTime(390,x+0.15);o.frequency.linearRampToValueAtTime(300,x+0.55);
+    const lf=c.createOscillator();lf.frequency.value=22;const lg=c.createGain();lg.gain.value=0.5;const g=c.createGain();g.gain.value=0;const e=c.createGain();env(e,x,0.05,0.12,0.6);lf.connect(lg);lg.connect(g.gain);o.connect(g);g.connect(e);out(e);o.start(x);lf.start(x);o.stop(x+0.7);lf.stop(x+0.7)});
+  tone(63.2,mf(50),3,{type:'triangle',g:0.08}); [62,66,69,74].forEach((m,i)=>tone(63.6+i*0.25,mf(m),2.5,{type:'triangle',g:0.05}));
+  return c.startRendering();
+}
+function wavBytes(buf){
+  const ch=buf.numberOfChannels,n=buf.length,sr=buf.sampleRate,dv=new DataView(new ArrayBuffer(44+n*ch*2));
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)dv.setUint8(o+i,s.charCodeAt(i))};
+  ws(0,'RIFF');dv.setUint32(4,36+n*ch*2,true);ws(8,'WAVE');ws(12,'fmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,ch,true);
+  dv.setUint32(24,sr,true);dv.setUint32(28,sr*ch*2,true);dv.setUint16(32,ch*2,true);dv.setUint16(34,16,true);ws(36,'data');dv.setUint32(40,n*ch*2,true);
+  const d=[...Array(ch)].map((_,k)=>buf.getChannelData(k));let o=44;
+  for(let i=0;i<n;i++)for(let k=0;k<ch;k++){const v=Math.max(-1,Math.min(1,d[k][i]));dv.setInt16(o,v<0?v*0x8000:v*0x7fff,true);o+=2}
+  return new Uint8Array(dv.buffer);
+}
+
+/* ---------- export hooks for rendering the MP4 ---------- */
+const fontsReady=document.fonts.load('400 40px Newsreader').then(()=>Promise.all(['italic 400 40px Newsreader','400 20px "IBM Plex Mono"','500 20px "IBM Plex Mono"','600 20px "IBM Plex Mono"'].map(f=>document.fonts.load(f))));
+if(EXPORT){
+  view.width=1080; view.height=1920; view.style.width='270px'; view.style.height='480px';
+  renderer.setPixelRatio(1); sizeAll(1080,1920);
+  window.__frame=t=>{drawFrame(t);return view.toDataURL('image/jpeg',0.92).split(',')[1]};
+  window.__audio=async()=>{const b=wavBytes(await buildScore());let s='';for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(s)};
+  window.__dur=DUR; fontsReady.then(()=>{window.__ready=true});
+  return;
+}
+
+/* ---------- live playback ---------- */
+const viewport=$('viewport'), controls=document.querySelector('.controls');
+function fit(){
+  const vw=viewport.clientWidth, vh=viewport.clientHeight; let h=vh, w=h*9/16; if(w>vw){w=vw;h=w*16/9}
+  w=Math.max(1,Math.floor(w)); h=Math.max(1,Math.floor(h)); const dpr=Math.min(window.devicePixelRatio||1,2);
+  view.style.width=w+'px'; view.style.height=h+'px'; controls.style.width=w+'px';
+  view.width=Math.round(w*dpr); view.height=Math.round(h*dpr);
+  renderer.setPixelRatio(1); sizeAll(view.width,view.height);
+}
+new ResizeObserver(fit).observe(viewport); fit();
+const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let t=0, playing=!reduce, last=performance.now();
+const playBtn=$('play'), sndBtn=$('snd'), scrub=$('scrub'), clock=$('clock');
+const mmss=x=>Math.floor(x/60)+':'+String(Math.floor(x%60)).padStart(2,'0');
+const syncBtn=()=>{playBtn.textContent=playing?'Pause':'Play'};
+playBtn.addEventListener('click',()=>{playing=!playing;syncBtn()});
+scrub.addEventListener('input',()=>{t=parseFloat(scrub.value)||0});
+const S={on:false,ctx:null,buf:null,src:null,gain:null,lastT:null};
+function stopSrc(){if(S.src){try{S.src.stop()}catch(e){}S.src=null}}
+sndBtn.addEventListener('click',()=>{
+  S.on=!S.on; sndBtn.setAttribute('aria-pressed',S.on);
+  if(!S.on){stopSrc();sndBtn.textContent='Sound off';return}
+  if(!S.ctx){S.ctx=new (window.AudioContext||window.webkitAudioContext)();S.gain=S.ctx.createGain();S.gain.connect(S.ctx.destination)}
+  S.ctx.resume(); if(!playing){playing=true;syncBtn()}
+  if(S.buf){sndBtn.textContent='Sound on';S.lastT=null;return}
+  sndBtn.textContent='Loading…';
+  buildScore().then(b=>{S.buf=b;S.lastT=null;if(S.on)sndBtn.textContent='Sound on'}).catch(()=>{sndBtn.textContent='No sound';S.on=false});
+});
+function soundTick(t){
+  if(!S.on||!S.buf) return;
+  if(!playing){stopSrc();S.lastT=null;return}
+  if(!(S.src&&S.lastT!==null&&t>=S.lastT&&t-S.lastT<0.3)){stopSrc();const s=S.ctx.createBufferSource();s.buffer=S.buf;s.connect(S.gain);s.start(0,Math.min(t,DUR-0.01));S.src=s}
+  S.lastT=t;
+}
+syncBtn();
+function frame(now){
+  const dt=Math.min(0.1,(now-last)/1000); last=now;
+  if(playing){t+=dt;if(t>=DUR)t=0}
+  drawFrame(t); soundTick(t);
+  if(document.activeElement!==scrub) scrub.value=t.toFixed(2);
+  const c=mmss(t); if(clock.textContent!==c) clock.textContent=c;
+  requestAnimationFrame(frame);
+}
+fontsReady.finally(()=>requestAnimationFrame(frame));
+})();
+</script>

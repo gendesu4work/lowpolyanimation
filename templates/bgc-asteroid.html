@@ -1,0 +1,519 @@
+<title>Asteroid over BGC</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 9:16 film frame on a dark ground; every caption is drawn into the frame itself so the page and the exported video match */
+:root{
+  --ink:#0b0d12; --paper:#eef0f2; --dim:#98a0ad; --fire:#ff8a3d; --rule:#2a303b;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--ink);color:var(--paper);box-sizing:border-box;font-family:var(--mono);
+  padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.player{height:100%;display:flex;flex-direction:column;align-items:center;gap:10px}
+.viewport{flex:1 1 auto;min-height:0;width:100%;display:flex;align-items:center;justify-content:center}
+#view{display:block;border-radius:8px;background:#000;width:270px;height:480px}
+.controls{display:flex;align-items:center;gap:8px;width:270px;max-width:100%}
+.controls button{flex:none;font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--paper);
+  background:transparent;border:1px solid var(--rule);border-radius:4px;padding:8px 10px;cursor:pointer}
+.controls button:hover{border-color:var(--dim)}
+.controls button[aria-pressed="true"]{border-color:var(--fire);color:var(--fire)}
+.controls button:focus-visible,.controls input:focus-visible{outline:2px solid var(--fire);outline-offset:2px}
+.controls input[type=range]{flex:1 1 auto;min-width:0;accent-color:var(--fire)}
+.clock{flex:none;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.export .controls{display:none}
+</style>
+
+<div class="player">
+  <div class="viewport" id="viewport">
+    <canvas id="view" role="img" aria-label="Animated what-if story: a 100-meter asteroid falls toward Metro Manila and hits Bonifacio Global City. The film shows its size and speed, the impact energy, the crater, the shockwave spreading to Makati, Ortigas, NAIA and Manila Bay, shattered glass, and the dust cloud afterwards."></canvas>
+  </div>
+  <div class="controls">
+    <button id="play" type="button">Pause</button>
+    <button id="snd" type="button" aria-pressed="false">Sound off</button>
+    <input id="scrub" type="range" min="0" max="60" step="0.01" value="0" aria-label="Timeline position">
+    <span class="clock" id="clock">0:00</span>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+const DUR=60, IMPACT=20, SP=new THREE.Vector3(500000,0,0);
+const EXPORT=new URLSearchParams(location.search).get('export')==='1';
+if(EXPORT) document.body.classList.add('export');
+const $=id=>document.getElementById(id);
+const clamp01=x=>x<0?0:x>1?1:x, lerp=(a,b,k)=>a+(b-a)*k, sm=x=>{x=clamp01(x);return x*x*(3-2*x)};
+function rngFrom(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rng=rngFrom(31);
+const FIRE='#ff8a3d', PAPER='#eef0f2';
+
+/* ---------- renderer ---------- */
+const view=$('view'), g2=view.getContext('2d');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color('#9cc3e6'); scene.fog=new THREE.Fog('#9cc3e6',2000,30000);
+const camera=new THREE.PerspectiveCamera(60,9/16,0.5,90000);
+const hemi=new THREE.HemisphereLight('#eaf3ff','#5d6a52',0.9); scene.add(hemi);
+const sun=new THREE.DirectionalLight('#fff3dc',0.9);
+sun.shadow.mapSize.set(2048,2048); sun.shadow.bias=-0.0006; scene.add(sun); scene.add(sun.target);
+const BOXG=new THREE.BoxGeometry(1,1,1), BOXB=new THREE.BoxGeometry(1,1,1); BOXB.translate(0,0.5,0);
+const lamCache={}, lam=c=>lamCache[c]||(lamCache[c]=new THREE.MeshLambertMaterial({color:c}));
+function box(w,h,d,m,x,y,z,parent,shadow=true){const mesh=new THREE.Mesh(BOXG,m);mesh.scale.set(w,h,d);mesh.position.set(x,y,z);mesh.castShadow=shadow;mesh.receiveShadow=true;parent.add(mesh);return mesh}
+const dmy=new THREE.Object3D(), tc=new THREE.Color();
+
+/* ---------- space: a low-poly Earth and the incoming rock ---------- */
+const space=new THREE.Group(); space.position.copy(SP); scene.add(space);
+const MARK=new THREE.Vector3(0.12,0.32,0.94).normalize();
+{
+  const eg=new THREE.IcosahedronGeometry(3000,4).toNonIndexed(), pos=eg.attributes.position, cols=[];
+  const v=new THREE.Vector3(), ocean=new THREE.Color('#2f6fae'), land=new THREE.Color('#5f9a4f'), dry=new THREE.Color('#a68f5f');
+  for(let i=0;i<pos.count;i+=3){
+    v.set(0,0,0); for(let k=0;k<3;k++) v.add(new THREE.Vector3().fromBufferAttribute(pos,i+k)); v.normalize();
+    const n=Math.sin(v.x*4.1+1.3)*Math.cos(v.y*3.7)+Math.sin(v.z*5.3+v.x*2)*0.6;
+    const isl=v.angleTo(MARK)<0.07||v.angleTo(new THREE.Vector3(0.18,0.4,0.9).normalize())<0.05;
+    const c=(n>0.55||isl)?(n>0.95?dry:land):ocean; for(let k=0;k<3;k++) cols.push(c.r,c.g,c.b);
+  }
+  eg.setAttribute('color',new THREE.Float32BufferAttribute(cols,3)); eg.computeVertexNormals();
+  var earth=new THREE.Mesh(eg,new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true})); space.add(earth);
+  const atmo=new THREE.Mesh(new THREE.SphereGeometry(3120,48,32),new THREE.MeshBasicMaterial({color:'#7fb6ff',transparent:true,opacity:0.12,side:THREE.BackSide,depthWrite:false}));space.add(atmo);
+  const sp=[]; for(let i=0;i<1600;i++){const a=rng()*Math.PI*2,b=Math.acos(rng()*2-1),r=40000;sp.push(r*Math.sin(b)*Math.cos(a),r*Math.cos(b),r*Math.sin(b)*Math.sin(a))}
+  const sg=new THREE.BufferGeometry(); sg.setAttribute('position',new THREE.Float32BufferAttribute(sp,3));
+  space.add(new THREE.Points(sg,new THREE.PointsMaterial({color:'#ffffff',size:2,sizeAttenuation:false})));
+}
+function rock(){const g=new THREE.IcosahedronGeometry(1,1).toNonIndexed(), p=g.attributes.position, r=rngFrom(4), map={};
+  for(let i=0;i<p.count;i++){const k=[p.getX(i),p.getY(i),p.getZ(i)].map(v=>v.toFixed(3)).join();if(!map[k])map[k]=0.75+r()*0.45;p.setXYZ(i,p.getX(i)*map[k],p.getY(i)*map[k],p.getZ(i)*map[k])}
+  g.computeVertexNormals(); return new THREE.Mesh(g,new THREE.MeshLambertMaterial({color:'#7a6a5c',flatShading:true}))}
+const asteroid=rock(); scene.add(asteroid);
+const add=c=>new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:0.5,depthWrite:false,blending:THREE.AdditiveBlending});
+const glow=new THREE.Mesh(new THREE.SphereGeometry(1,24,16),add('#ffb35a')); scene.add(glow);
+const trailG=new THREE.ConeGeometry(1,1,20,1,true); trailG.translate(0,-0.5,0); trailG.rotateX(-Math.PI/2);
+const trail=new THREE.Mesh(trailG,add('#ff9a4a')); scene.add(trail);
+const DIR=new THREE.Vector3(0.45,0.6,-0.65).normalize();
+const rockPos=t=>DIR.clone().multiplyScalar((IMPACT-t)*950);
+
+/* ---------- Metro Manila, 1 unit = 1 meter, BGC at the origin ---------- */
+const city=new THREE.Group(); scene.add(city);
+box(60000,1,60000,lam('#7b8a6c'),0,-0.6,0,city,false);
+const water=lam('#3f78a8');
+box(30000,1.2,60000,water,-10500-15000,-0.2,0,city,false);
+const lag=new THREE.Mesh(new THREE.CylinderGeometry(5200,5200,1.2,40),water); lag.position.set(9500,-0.2,10500); city.add(lag);
+for(let i=0;i<14;i++){const a=-9500+i*700, z=-1200-Math.sin(i*0.7)*900-i*90;box(760,1.3,160,water,a,-0.15,z,city,false)}
+// roads in BGC
+for(let k=-4;k<=4;k++){box(1600,0.4,14,lam('#45474d'),0,0.05,k*170,city,false);box(14,0.4,1600,lam('#45474d'),k*170,0.06,0,city,false)}
+const PLACES=[
+  {name:'Makati',km:3.1,p:[-2200,0,-2200]},{name:'NAIA',km:5.1,p:[-4400,0,2600]},{name:'Ortigas',km:5.9,p:[800,0,-5850]},
+  {name:'Manila Bay',km:10.6,p:[-10500,0,-1500]},{name:'Laguna de Bay',km:12.4,p:[7800,0,9600]}
+];
+// window texture shared by every tower
+const wcv=document.createElement('canvas'); wcv.width=64; wcv.height=128;
+{const s=wcv.getContext('2d');s.fillStyle='#ffffff';s.fillRect(0,0,64,128);s.fillStyle='#c9d6e0';for(let y=2;y<128;y+=8)for(let x=2;x<64;x+=8)s.fillRect(x,y,5,5)}
+const wtex=new THREE.CanvasTexture(wcv); wtex.magFilter=THREE.NearestFilter;
+const towers=[];
+function cluster(cx,cz,n,rad,hmin,hmax,cols,grid){
+  for(let i=0;i<n;i++){
+    let x,z; if(grid){x=cx+(Math.floor(rng()*9)-4)*170+(rng()<0.5?-45:45);z=cz+(Math.floor(rng()*9)-4)*170+(rng()<0.5?-45:45)}
+    else{const a=rng()*Math.PI*2,r=Math.sqrt(rng())*rad;x=cx+Math.cos(a)*r;z=cz+Math.sin(a)*r}
+    towers.push({x,z,w:28+rng()*28,d:28+rng()*28,h:hmin+rng()*(hmax-hmin),c:new THREE.Color(cols[Math.floor(rng()*cols.length)]),bgc:grid});
+  }
+}
+const GLASS=['#6f93ad','#8fb0c4','#5d7f99','#9fb8c8','#c9d3da','#7d9db0','#b8c4cc'];
+cluster(0,0,130,700,60,250,GLASS,true);
+cluster(-2200,-2200,150,900,70,260,GLASS,false);
+cluster(800,-5850,90,800,60,220,GLASS,false);
+for(let i=0;i<3600;i++){
+  const x=rng()*28000-17000, z=rng()*28000-14000;
+  if(x<-10300) continue; if(Math.hypot(x+700,z-900)<140) continue; if(Math.hypot(x-9500,z-10500)<5300) continue; if(Math.hypot(x,z)<760) continue;
+  towers.push({x,z,w:16+rng()*22,d:16+rng()*22,h:6+rng()*22,c:new THREE.Color(['#cfc6b6','#bdb3a2','#d8d2c6','#a99e8c','#c6b49a'][Math.floor(rng()*5)]),low:true});
+}
+towers.forEach(b=>{b.dist=Math.hypot(b.x,b.z);b.mk=Math.hypot(b.x+2200,b.z+2200)<1000});
+const towerI=new THREE.InstancedMesh(BOXB,new THREE.MeshLambertMaterial({map:wtex}),towers.length);
+towerI.frustumCulled=false; towerI.castShadow=true; towerI.receiveShadow=true; city.add(towerI);
+towers.forEach((b,i)=>towerI.setColorAt(i,b.c));
+const RUBBLE=new THREE.Color('#6e6258'), DARK=new THREE.Color('#3b3a3a');
+// street level detail near the camera on High Street
+const SC0=new THREE.Vector3(-700,1.7,900);
+const street=new THREE.Group(); scene.add(street);
+box(70,0.3,16,lam('#48494f'),SC0.x,0.1,SC0.z-10,street); box(70,0.35,6,lam('#b9b5ac'),SC0.x,0.15,SC0.z+1,street);
+const CARS=['#c23b33','#f2f2f2','#2b2f38','#3a6ea5','#d9a62e'];
+for(let i=0;i<6;i++){const g=new THREE.Group();street.add(g);g.position.set(SC0.x-30+i*11,0,SC0.z-12+(i%2)*6);
+  box(4.2,1.1,1.9,lam(CARS[i%5]),0,0.75,0,g);box(2.4,0.7,1.7,lam('#26323d'),-0.2,1.6,0,g);}
+for(let i=0;i<5;i++){box(0.4,3,0.4,lam('#6b4f36'),SC0.x-28+i*14,1.5,SC0.z+4,street);box(3.4,3,3.4,lam('#5f8f4a'),SC0.x-28+i*14,4,SC0.z+4,street)}
+function makePerson(c){
+  const mk=col=>new THREE.MeshLambertMaterial({color:col});
+  const g=new THREE.Group(); g.rotation.order='YXZ';
+  const legL=new THREE.Group(), legR=new THREE.Group(), armL=new THREE.Group(), armR=new THREE.Group();
+  legL.position.set(-0.11,0.9,0); legR.position.set(0.11,0.9,0);
+  for(const l of [legL,legR]){box(0.17,0.9,0.19,mk(c.pants),0,-0.45,0,l);box(0.19,0.08,0.28,lam('#1c1c20'),0,-0.86,0.04,l)}
+  g.add(legL,legR); box(0.46,0.62,0.27,mk(c.shirt),0,1.21,0,g);
+  armL.position.set(-0.31,1.48,0); armR.position.set(0.31,1.48,0);
+  for(const a of [armL,armR]){box(0.14,0.6,0.16,mk(c.shirt),0,-0.3,0,a);box(0.12,0.1,0.13,mk(c.skin),0,-0.64,0,a)}
+  g.add(armL,armR); box(0.3,0.32,0.3,mk(c.skin),0,1.7,0,g); box(0.32,0.1,0.32,mk(c.hair),0,1.89,0,g); box(0.32,0.22,0.08,mk(c.hair),0,1.77,-0.13,g);
+  street.add(g); return {g,armL,armR,legL,legR};
+}
+const LOOKH=Math.atan2(DIR.x,DIR.z);
+const crowd=[['#e0b48e','#d6453d','#34507e','#1d1712'],['#c68e63','#f1f0ea','#3b3b42','#2a1d14'],['#e7c19c','#2f8f85','#2e3440','#3b2a1c'],
+  ['#a8704b','#e0a63a','#5a4d7a','#141414'],['#d9a77f','#3a6ea5','#c9b48f','#1d1712'],['#f0cfb0','#7a3b8c','#2b2f38','#5a3a24']].map(([skin,shirt,pants,hair],i)=>{
+  const p=makePerson({skin,shirt,pants,hair}); const f=6.5+i*1.4, s=(i%2?1:-1)*(1.2+i*0.6);
+  p.g.position.set(SC0.x+Math.sin(LOOKH)*f+Math.cos(LOOKH)*s,0,SC0.z+Math.cos(LOOKH)*f-Math.sin(LOOKH)*s); p.g.rotation.y=LOOKH; return p;
+});
+
+/* ---------- the impact: fireball, dust dome, debris, crater, smoke column, ring ---------- */
+const fireball=new THREE.Mesh(new THREE.SphereGeometry(1,40,24),new THREE.MeshBasicMaterial({color:'#ffd27a',transparent:true,opacity:1,depthWrite:false})); scene.add(fireball);
+const dome=new THREE.Mesh(new THREE.SphereGeometry(1,40,20),new THREE.MeshLambertMaterial({color:'#8a7766',transparent:true,opacity:0.5,depthWrite:false})); scene.add(dome);
+const crater=new THREE.Group(); scene.add(crater);
+{const floor=new THREE.Mesh(new THREE.CylinderGeometry(760,700,4,48),lam('#4a3a30'));floor.position.y=0.8;crater.add(floor);
+  const glowD=new THREE.Mesh(new THREE.CylinderGeometry(260,260,5,32),new THREE.MeshBasicMaterial({color:'#ff7a2a'}));glowD.position.y=1.5;crater.add(glowD);crater.userData.glow=glowD;
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(800,90,6,48),new THREE.MeshLambertMaterial({color:'#6a5646',flatShading:true}));rim.rotation.x=Math.PI/2;rim.scale.z=0.45;crater.add(rim)}
+const DEB=420, debI=new THREE.InstancedMesh(BOXG,lam('#5a4c42'),DEB); debI.frustumCulled=false; scene.add(debI);
+const debS=[]; for(let i=0;i<DEB;i++){const a=rng()*Math.PI*2, up=0.35+rng()*0.6, v=250+rng()*650; debS.push([Math.cos(a)*v*(1-up*0.5),v*up,Math.sin(a)*v*(1-up*0.5),8+rng()*30,rng()])}
+const puffG=new THREE.IcosahedronGeometry(1,0), puffM=new THREE.MeshLambertMaterial({color:'#6b5a4c',flatShading:true});
+const puffs=[]; for(let i=0;i<46;i++){const m=new THREE.Mesh(puffG,puffM);scene.add(m);const cap=i>=26;puffs.push({m,cap,f:cap?0.9+rng()*0.15:i/26,a:rng()*Math.PI*2,r:cap?600+rng()*900:rng()*120,s:cap?500+rng()*350:260+rng()*140})}
+const ring=new THREE.Mesh(new THREE.RingGeometry(0.985,1,128),new THREE.MeshBasicMaterial({color:'#ffd9a8',transparent:true,opacity:0.85,side:THREE.DoubleSide,depthWrite:false}));
+ring.rotation.x=-Math.PI/2; ring.position.y=30; scene.add(ring);
+const ringFill=new THREE.Mesh(new THREE.CircleGeometry(1,96),new THREE.MeshBasicMaterial({color:'#ff9a4a',transparent:true,opacity:0.12,depthWrite:false}));
+ringFill.rotation.x=-Math.PI/2; ringFill.position.y=25; scene.add(ringFill);
+const wallG=new THREE.CylinderGeometry(1,1,1,64,1,true); wallG.translate(0,0.5,0);
+const dustWall=new THREE.Mesh(wallG,new THREE.MeshLambertMaterial({color:'#8c7a68',transparent:true,opacity:0.55,side:THREE.DoubleSide,depthWrite:false})); scene.add(dustWall);
+const GL=260, glassI=new THREE.InstancedMesh(BOXG,new THREE.MeshBasicMaterial({color:'#cfe8ff'}),GL); glassI.frustumCulled=false; scene.add(glassI);
+const glassS=[]; {const mk=towers.filter(b=>b.mk&&Math.hypot(b.x+2350,b.z+2050)<420); for(let i=0;i<GL;i++){const b=mk[i%mk.length];glassS.push([b.x+(rng()-0.5)*b.w,40+rng()*Math.min(b.h,180),b.z+b.d/2+2,(rng()-0.5)*40,rng()*20,10+rng()*40])}}
+const ash=[]; for(let i=0;i<900;i++) ash.push([rng(),rng(),rng(),rng()]);
+const ashG=new THREE.BufferGeometry(); ashG.setAttribute('position',new THREE.Float32BufferAttribute(new Float32Array(900*3),3));
+const ashP=new THREE.Points(ashG,new THREE.PointsMaterial({color:'#bfb3a6',size:3,sizeAttenuation:false,transparent:true,opacity:0.8})); ashP.frustumCulled=false; scene.add(ashP);
+
+/* ---------- story beats ---------- */
+const shockT=km=>Math.max(0,km/0.36-0.8*Math.min(1,km));
+const ringR=t=>13000*sm((t-33.3)/7.2);
+const fmt=n=>Math.round(n).toLocaleString('en-US');
+const SC=[
+  {t0:0,t1:7,lab:'Asteroid',val:()=>'100 m wide',sub:'About the length of a football field'},
+  {t0:7,t1:14,lab:'Speed',val:t=>fmt(72000*sm((t-7.4)/1.8))+' km/h',sub:'About 20 km every second'},
+  {t0:14,t1:20,lab:'Time to impact',val:t=>Math.max(0,20-t).toFixed(1)+' s',sub:'Seen from the street, 1 km away'},
+  {t0:20,t1:26,lab:'Energy',val:t=>fmt(75*sm((t-21.2)/1.6))+' megatons',sub:'About 5,000 Hiroshima bombs'},
+  {t0:26,t1:33,lab:'Crater',val:()=>'1.5 km wide',sub:'Most of BGC is gone'},
+  {t0:33,t1:41,lab:'Shockwave',val:t=>'T+'+Math.round(shockT(ringR(t)/1000))+' s',sub:t=>{const r=ringR(t)/1000;const hit=PLACES.filter(p=>p.km<=r).pop();return hit?'Reaches '+hit.name+' · '+hit.km+' km':'Racing out from BGC'}},
+  {t0:41,t1:48,lab:'Glass breaks up to',val:()=>'40 km away',sub:'Makati towers at T+8 s'},
+  {t0:48,t1:54,lab:'Afterwards',val:()=>'Dust and ash',sub:'Dark skies over Metro Manila'},
+  {t0:54,t1:60,card:true}
+];
+const ENV={
+  space:{bg:'#03050b',sky:'#9fb4ff',gnd:'#0a0c14',hi:0.5,sun:'#ffffff',si:1.3,fog:[1e6,2e6]},
+  day:{bg:'#9cc3e6',sky:'#eaf3ff',gnd:'#5d6a52',hi:0.9,sun:'#fff3dc',si:0.9,fog:[4000,40000]},
+  glare:{bg:'#ffe9c4',sky:'#fff4dc',gnd:'#8a7a5a',hi:1.1,sun:'#ffe2b0',si:1.1,fog:[4000,40000]},
+  blast:{bg:'#c98a5a',sky:'#ffd2a0',gnd:'#5a4030',hi:1.0,sun:'#ffb070',si:1.0,fog:[3000,30000]},
+  haze:{bg:'#a08c7a',sky:'#e8d4bc',gnd:'#4d4436',hi:0.85,sun:'#ffcf9a',si:0.8,fog:[3000,28000]},
+  map:{bg:'#7f8d96',sky:'#e6ebee',gnd:'#4d5546',hi:0.95,sun:'#ffffff',si:0.7,fog:[60000,90000]},
+  dusk:{bg:'#5a3f36',sky:'#d08a5a',gnd:'#2a2222',hi:0.7,sun:'#ff8a4a',si:0.6,fog:[2000,20000]}
+};
+function applyEnv(a,b,k){
+  const e=k==null?a:null, m=(p)=>e?e[p]:null;
+  const bg=e?new THREE.Color(e.bg):new THREE.Color(a.bg).lerp(new THREE.Color(b.bg),k);
+  scene.background.copy(bg); scene.fog.color.copy(bg);
+  const pick=p=>e?e[p]:lerp(a[p],b[p],k), col=p=>e?new THREE.Color(e[p]):new THREE.Color(a[p]).lerp(new THREE.Color(b[p]),k);
+  hemi.color.copy(col('sky')); hemi.groundColor.copy(col('gnd')); hemi.intensity=pick('hi'); sun.color.copy(col('sun')); sun.intensity=pick('si');
+  scene.fog.near=e?e.fog[0]:lerp(a.fog[0],b.fog[0],k); scene.fog.far=e?e.fog[1]:lerp(a.fog[1],b.fog[1],k);
+}
+const look=new THREE.Vector3(), V=(a)=>new THREE.Vector3(a[0],a[1],a[2]);
+function setShot(p0,p1,l0,l1,k){const e=sm(k);camera.position.copy(V(p0).lerp(V(p1),e));look.copy(V(l0).lerp(V(l1),e));camera.lookAt(look)}
+
+/* ---------- per-frame state, a pure function of t ---------- */
+function update(t){
+  let si=SC.findIndex(s=>t>=s.t0&&t<s.t1); if(si<0) si=SC.length-1;
+  const k=(t-SC[si].t0)/(SC[si].t1-SC[si].t0), after=t>=IMPACT;
+  space.visible=si===0; city.visible=si>0; street.visible=si===2;
+  camera.far=si===5?90000:60000; camera.updateProjectionMatrix();
+
+  // light and sky
+  if(si===0) applyEnv(ENV.space);
+  else if(si===1) applyEnv(ENV.day);
+  else if(si===2) applyEnv(ENV.day,ENV.glare,sm((t-16)/3.8));
+  else if(si===3) applyEnv(ENV.blast,ENV.haze,sm((t-21)/4));
+  else if(si===4) applyEnv(ENV.haze);
+  else if(si===5) applyEnv(ENV.map);
+  else if(si===6) applyEnv(ENV.haze);
+  else applyEnv(ENV.haze,ENV.dusk,sm((t-48)/3));
+
+  // camera
+  const rp=rockPos(t);
+  if(si===0){
+    const e=sm(k), lp=SP.clone().add(MARK.clone().multiplyScalar(3000));
+    camera.position.copy(SP).add(new THREE.Vector3(lerp(1400,600,e),lerp(2600,1700,e),lerp(13000,6400,e)));
+    look.copy(lp); camera.lookAt(look);
+    asteroid.position.copy(camera.position).add(new THREE.Vector3(-900*(1-e),700*(1-e),0)).lerp(lp,0.18+0.6*e); asteroid.scale.setScalar(90); asteroid.rotation.set(t*0.7,t*0.4,0);
+    earth.rotation.y=t*0.01;
+  } else if(si===1){
+    camera.position.set(lerp(-2900,-2500,sm(k)),lerp(320,260,sm(k)),lerp(1700,1450,sm(k)));
+    look.set(0,250,0).lerp(rp,0.42); camera.lookAt(look);
+  } else if(si===2){
+    camera.position.copy(SC0).add(new THREE.Vector3(Math.sin(t*20)*0.03*sm((t-17)/3),0,0));
+    look.copy(SC0).add(new THREE.Vector3(0,60,0)).lerp(rp.clone().add(new THREE.Vector3(0,40,0)),0.55+0.4*sm((t-14)/6)); camera.lookAt(look);
+  } else if(si===3){
+    setShot([2600,1700,4300],[3000,2300,5300],[0,350,0],[0,500,0],k);
+    const sh=Math.max(0,1-(t-20)/2.2)*40; camera.position.x+=Math.sin(t*41)*sh; camera.position.y+=Math.sin(t*53)*sh;
+  } else if(si===4) setShot([-2700,2700,3700],[-3200,3200,4400],[0,900,0],[0,1100,0],k);
+  else if(si===5) setShot([-2800,25500,9800],[-3400,27000,9200],[-3800,0,-700],[-3800,0,-900],k);
+  else if(si===6) setShot([-2420,70,-2120],[-2440,90,-2150],[-1200,160,-1000],[-1200,180,-1000],k);
+  else setShot([-4200,2100,6200],[-4700,2500,7000],[0,1600,0],[0,1900,0],(t-48)/12);
+  if(si===6){const sh=Math.max(0,1-Math.abs(t-44.6)/1.2)*3;camera.position.x+=Math.sin(t*47)*sh;camera.position.y+=Math.sin(t*39)*sh}
+  sun.castShadow=si===2;
+  sun.target.position.copy(si===2?SC0:look); sun.position.copy(sun.target.position).add(new THREE.Vector3(30,60,40));
+  sun.shadow.camera.left=sun.shadow.camera.bottom=-60; sun.shadow.camera.right=sun.shadow.camera.top=60; sun.shadow.camera.far=200; sun.shadow.camera.updateProjectionMatrix();
+
+  // asteroid, its glow and trail on the way down
+  const flying=si>=1&&t<IMPACT;
+  if(si>0){asteroid.visible=flying; if(flying){asteroid.position.copy(rp); asteroid.scale.setScalar(50); asteroid.rotation.set(t*1.3,t*0.9,0)}}
+  glow.visible=trail.visible=flying;
+  if(flying){
+    const heat=sm((t-8)/10); glow.position.copy(rp); glow.scale.setScalar(Math.max(50*(2.2+3.5*heat),camera.position.distanceTo(rp)*0.025)); glow.material.opacity=0.35+0.4*heat;
+    trail.position.copy(rp); trail.lookAt(rp.clone().add(DIR)); trail.scale.set(50*(1.6+heat),50*(1.6+heat),300+2200*heat); trail.material.opacity=0.25+0.45*heat;
+  }
+  for(const p of crowd){p.armR.rotation.set(0,0,0);p.armL.rotation.set(0,0,0);p.g.rotation.x=0}
+  if(si===2) crowd.forEach((p,i)=>{if(i%2===0){p.armR.rotation.x=-2.5;p.armR.rotation.z=0.2}else if(t>17+i*0.2){p.armL.rotation.x=-2.2;p.armR.rotation.x=-2.2;p.g.rotation.x=-0.08}});
+
+  // the city: towers vanish inside the crater, collapse out to ~1.8 km, Makati glass dims after the blast passes
+  const blast=after?Math.min(4000,(t-IMPACT)*700):0;
+  towers.forEach((b,i)=>{
+    let h=b.h, c=b.c;
+    if(after&&b.dist<760&&b.dist<blast+200) h=0.001;
+    else if(after&&b.dist<1800&&b.dist<blast){h=Math.min(b.h,8+(b.h-8)*(1-sm((blast-b.dist)/400))); c=RUBBLE}
+    else if(b.mk&&t>44.5) c=tc.copy(b.c).lerp(DARK,0.45);
+    dmy.position.set(b.x,0,b.z); dmy.scale.set(b.w,h,b.d); dmy.rotation.set(0,0,0); dmy.updateMatrix(); towerI.setMatrixAt(i,dmy.matrix); towerI.setColorAt(i,c);
+  });
+  towerI.instanceMatrix.needsUpdate=true; towerI.instanceColor.needsUpdate=true;
+
+  // fireball and dust dome
+  const tau=t-IMPACT;
+  fireball.visible=after&&tau<5; dome.visible=after&&si>=3&&si<=4;
+  if(fireball.visible){const r=200+1100*(1-Math.pow(1-clamp01(tau/1.8),3));fireball.position.set(0,r*0.35,0);fireball.scale.set(r,r*0.8,r);
+    fireball.material.color.set(tau<0.6?'#fff4cc':tau<2?'#ffb25a':'#e2653a');fireball.material.opacity=1-sm((tau-1.5)/3.5)}
+  if(dome.visible){const r=300+3000*(1-Math.pow(1-clamp01(tau/6),2));dome.scale.set(r,r*0.32,r);dome.material.opacity=0.55*(1-sm((tau-4)/9))}
+  crater.visible=after&&si>=3&&si!==5; crater.scale.setScalar(sm(tau/1.5)); crater.userData.glow.material.color.set(si>=7?'#c2401a':'#ff7a2a');
+  // debris
+  for(let i=0;i<DEB;i++){
+    const s=debS[i], u=tau-s[4]*0.3, on=after&&u>0&&si<=4;
+    if(on){const y=s[1]*u-60*u*u; if(y<0&&u>0.5){dmy.scale.setScalar(0.0001)}else{dmy.position.set(s[0]*u,Math.max(0,y)+20,s[2]*u);dmy.rotation.set(u*3*s[4],u*2,0);dmy.scale.setScalar(s[3])}}
+    else dmy.scale.setScalar(0.0001);
+    dmy.updateMatrix(); debI.setMatrixAt(i,dmy.matrix);
+  }
+  debI.instanceMatrix.needsUpdate=true;
+  // smoke column rising out of the crater
+  const colH=after?Math.min(6500,400+(tau)*260):0;
+  puffs.forEach((p,i)=>{p.m.visible=after&&si>=3&&si!==5&&tau>0.8;if(!p.m.visible)return;
+    const g=sm((tau-0.8)/3), y=p.cap?colH*(0.92+0.1*Math.sin(i)):colH*p.f*0.9, rr=p.cap?p.r*(0.4+0.6*sm(tau/14)):p.r;
+    p.m.position.set(Math.cos(p.a+tau*0.03)*rr,y,Math.sin(p.a+tau*0.03)*rr); p.m.scale.setScalar(p.s*g*(p.cap?1+0.4*sm(tau/20):1)); p.m.rotation.set(i,i*2,0)});
+  puffM.color.set(si>=7?'#4d3a33':'#6b5a4c');
+  // shockwave map ring
+  ring.visible=ringFill.visible=si===5;
+  if(si===5){const r=Math.max(1,ringR(t));ring.scale.setScalar(r);ringFill.scale.setScalar(r);ring.material.opacity=0.9-0.4*(r/13000)}
+  // the dust wall arriving at Makati, and the glass it breaks
+  dustWall.visible=si===6;
+  if(si===6){const r=3100+(t-44.6)*520; dustWall.scale.set(r,lerp(500,700,k),r); dustWall.material.opacity=0.6}
+  for(let i=0;i<GL;i++){
+    const s=glassS[i], u=t-44.6-(i%7)*0.05, on=si===6&&u>0&&u<3.4;
+    if(on){dmy.position.set(s[0]+s[3]*u,Math.max(0,s[1]+s[4]*u-45*u*u),s[2]+s[5]*u);dmy.rotation.set(u*6,u*4,0);dmy.scale.set(1.6,1.6,0.2)}else dmy.scale.setScalar(0.0001);
+    dmy.updateMatrix(); glassI.setMatrixAt(i,dmy.matrix);
+  }
+  glassI.instanceMatrix.needsUpdate=true;
+  // falling ash around the camera
+  ashP.visible=si>=7;
+  if(ashP.visible){const a=ashG.attributes.position;ash.forEach((s,i)=>{const f=(s[3]+t*0.05)%1;a.setXYZ(i,camera.position.x+(s[0]-0.5)*2400,camera.position.y+600-f*1400,camera.position.z-300-s[2]*2400)});a.needsUpdate=true}
+  return si;
+}
+
+/* ---------- captions, drawn into the frame ---------- */
+const SERIF='Newsreader, Georgia, serif', MONO='"IBM Plex Mono", Consolas, monospace';
+const pv=new THREE.Vector3();
+function txt(s,x,y,font,color,o={}){
+  g2.save(); g2.globalAlpha=o.alpha==null?1:o.alpha; g2.font=font; g2.letterSpacing=(o.ls||0)+'px';
+  g2.fillStyle=color; g2.textAlign=o.align||'left'; g2.textBaseline='middle';
+  if(o.shadow!==false){g2.shadowColor='rgba(0,0,0,.65)';g2.shadowBlur=o.blur||8;g2.shadowOffsetY=2}
+  g2.fillText(s,x,y); g2.restore();
+}
+function richLines(tokens,font,maxW){
+  g2.font=font; const words=[]; tokens.forEach(([s,c])=>s.split(' ').forEach(w=>w&&words.push([w,c])));
+  const sp=g2.measureText(' ').width, lines=[[]]; let w=0;
+  for(const wd of words){const ww=g2.measureText(wd[0]).width;if(w&&w+sp+ww>maxW){lines.push([]);w=0}lines[lines.length-1].push([wd[0],wd[1],ww]);w+=(w?sp:0)+ww}
+  return {lines,sp};
+}
+function wrapText(s,font,maxW){g2.font=font;const out=[];let cur='';for(const w of s.split(' ')){const tr=cur?cur+' '+w:w;if(g2.measureText(tr).width>maxW&&cur){out.push(cur);cur=w}else cur=tr}if(cur)out.push(cur);return out}
+function tag(x,y,text,U,hot){
+  const f='500 '+2.1*U+'px '+MONO; g2.font=f; g2.letterSpacing=0.3*U+'px';
+  const w=g2.measureText(text).width+1.8*U, h=4.2*U;
+  g2.fillStyle=hot?'#c4472a':'rgba(10,12,18,.8)'; g2.beginPath(); g2.roundRect(x-w/2,y-h-3*U,w,h,0.5*U); g2.fill();
+  g2.fillStyle='rgba(238,240,242,.75)'; g2.fillRect(x-1,y-3*U,2,3*U);
+  txt(text,x,y-3*U-h/2,f,PAPER,{align:'center',ls:0.3*U,shadow:false});
+}
+function project(p,Wd,Hd){pv.set(p[0],p[1],p[2]).project(camera);return pv.z>1?null:[(pv.x*0.5+0.5)*Wd,(-pv.y*0.5+0.5)*Hd]}
+function drawOverlay(t,si){
+  const Wd=view.width, Hd=view.height, U=Wd/100, s=SC[si];
+  const gr=g2.createLinearGradient(0,0,0,Hd*0.5); gr.addColorStop(0,'rgba(5,7,11,.5)'); gr.addColorStop(1,'rgba(5,7,11,0)');
+  g2.fillStyle=gr; g2.fillRect(0,0,Wd,Hd*0.5);
+  // white-out at impact
+  const fl=t>=IMPACT?Math.max(0,1-(t-IMPACT)/1.6):Math.max(0,(t-19.2)/0.8)*0.6;
+  if(fl>0.003){g2.fillStyle='rgba(255,250,235,'+fl+')';g2.fillRect(0,0,Wd,Hd)}
+  const ha=1-sm((t-54)/0.6);
+  if(ha>0.01){
+    const fs=6.2*U, f='400 '+fs+'px '+SERIF, lh=fs*1.16;
+    const {lines,sp}=richLines([['What if an',PAPER],['asteroid',FIRE],['hit BGC, Bonifacio Global City?',PAPER]],f,Wd*0.84);
+    lines.forEach((ln,li)=>{const w=ln.reduce((a,x)=>a+x[2],0)+sp*(ln.length-1);let x=Wd/2-w/2;ln.forEach(([wd,c,ww])=>{txt(wd,x,Hd*0.055+lh*(li+0.5),f,c,{alpha:ha});x+=ww+sp})});
+  }
+  if(!s.card){
+    const a=sm((t-s.t0)/0.35)*(1-sm((t-(s.t1-0.25))/0.25))*(1-fl), x=Wd*0.06; let y=Hd*0.235;
+    const val=typeof s.val==='function'?s.val(t):s.val, sub=typeof s.sub==='function'?s.sub(t):s.sub;
+    txt(s.lab.toUpperCase(),x,y,'500 '+2.3*U+'px '+MONO,PAPER,{ls:0.37*U,alpha:a}); y+=7.2*U;
+    txt(val,x,y,'400 '+10*U+'px '+SERIF,si>=2&&si<=5?FIRE:PAPER,{alpha:a}); y+=7.2*U;
+    txt(sub.toUpperCase(),x,y,'400 '+2.3*U+'px '+MONO,PAPER,{ls:0.23*U,alpha:a}); y+=3.6*U;
+    txt('FICTION · ROUGH ESTIMATES FOR A 100 M STONY ASTEROID',x,y,'400 '+1.75*U+'px '+MONO,PAPER,{ls:0.2*U,alpha:a*0.62});
+  }
+  // place labels
+  if(si===0&&t>1.5){const p=project([SP.x+MARK.x*3000,SP.y+MARK.y*3000,SP.z+MARK.z*3000],Wd,Hd);if(p)tag(p[0],p[1],'METRO MANILA',U,false)}
+  if(si===1&&t>8){const p=project([0,260,0],Wd,Hd);if(p)tag(p[0],p[1],'BGC',U,false)}
+  if(si===4){const p=project([0,120,800],Wd,Hd);if(p)tag(p[0],p[1],'WHERE BGC WAS',U,true)}
+  if(si===5){
+    const r=ringR(t)/1000, p0=project([0,0,0],Wd,Hd); if(p0) tag(p0[0],p0[1],'GROUND ZERO',U,true);
+    for(const pl of PLACES){const p=project(pl.p,Wd,Hd);if(p)tag(p[0],p[1],pl.name.toUpperCase()+(r>=pl.km?' · T+'+Math.round(shockT(pl.km))+' S':''),U,r>=pl.km)}
+  }
+  if(si===6&&t>41.6){const p=project([-2350,120,-2300],Wd,Hd);if(p)tag(p[0],p[1],'MAKATI · 3.1 KM',U,t>44.6)}
+  // end card
+  const ca=0.74*sm((t-54)/1.0);
+  if(ca>0.002){
+    g2.fillStyle='rgba(8,6,6,'+ca+')'; g2.fillRect(0,0,Wd,Hd);
+    const blocks=[['One rock. 100 meters wide.',54.4,6.6,PAPER,'400 '],['A whole district, gone in seconds.',55.7,6.6,PAPER,'400 '],['Would you see it coming?',57.2,7.8,FIRE,'500 ']]
+      .map(([s,t0,sz,c,wt])=>{const f=wt+sz*U+'px '+SERIF;return {lines:wrapText(s,f,Wd*0.8),f,lh:sz*U*1.2,c,a:sm((t-t0)/0.7)}});
+    const gap=3*U, H2=blocks.reduce((a,b)=>a+b.lines.length*b.lh,0)+gap*2; let y=Hd/2-H2/2;
+    for(const b of blocks){for(const l of b.lines){if(b.a>0.01)txt(l,Wd/2,y+b.lh/2,b.f,b.c,{align:'center',alpha:b.a});y+=b.lh}y+=gap}
+    txt('FICTION · ROUGH ESTIMATES FOR A 100 M STONY ASTEROID',Wd/2,Hd*0.9,'400 '+1.75*U+'px '+MONO,PAPER,{align:'center',ls:0.2*U,alpha:0.55*sm((t-55)/0.8)});
+  }
+}
+function drawFrame(t){
+  const si=update(t); renderer.render(scene,camera);
+  g2.globalAlpha=1; g2.drawImage(renderer.domElement,0,0,view.width,view.height);
+  drawOverlay(t,si);
+}
+
+/* ---------- soundtrack: synthesized offline once, then played in sync with the timeline ---------- */
+function buildScore(){
+  const SR=44100, c=new OfflineAudioContext(2,SR*DUR,SR), R=rngFrom(41);
+  const master=c.createGain(); master.gain.value=0.8;
+  const comp=c.createDynamicsCompressor(); comp.threshold.value=-16; comp.ratio.value=4; master.connect(comp); comp.connect(c.destination);
+  const len=SR*3, ir=c.createBuffer(2,len,SR);
+  for(let ch=0;ch<2;ch++){const d=ir.getChannelData(ch);for(let i=0;i<len;i++)d[i]=(R()*2-1)*Math.pow(1-i/len,2.6)}
+  const rev=c.createConvolver(); rev.buffer=ir; const wet=c.createGain(); wet.gain.value=0.32; rev.connect(wet); wet.connect(master);
+  const nb=c.createBuffer(1,SR*2,SR), nd=nb.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=R()*2-1;
+  const out=(node,w=true)=>{node.connect(master);if(w)node.connect(rev)};
+  const env=(g,t0,a,peak,dur)=>{g.gain.setValueAtTime(0.0001,t0);g.gain.exponentialRampToValueAtTime(peak,t0+a);g.gain.exponentialRampToValueAtTime(0.0001,t0+dur)};
+  const keys=(param,ks)=>{param.setValueAtTime(ks[0][1],0);ks.forEach(([t,v])=>param.linearRampToValueAtTime(v,t))};
+  const mf=m=>440*Math.pow(2,(m-69)/12);
+  function tone(t0,f,dur,o={}){const s=c.createOscillator();s.type=o.type||'sine';s.frequency.setValueAtTime(f,t0);if(o.glide)s.frequency.exponentialRampToValueAtTime(o.glide,t0+dur);
+    const g=c.createGain();env(g,t0,o.a||0.005,o.g||0.2,dur);let n=s;if(o.lp){const f2=c.createBiquadFilter();f2.frequency.value=o.lp;s.connect(f2);n=f2}n.connect(g);out(g,o.wet!==false);s.start(t0);s.stop(t0+dur+0.05)}
+  function nz(t0,dur,o={}){const s=c.createBufferSource();s.buffer=nb;s.loop=true;const f=c.createBiquadFilter();f.type=o.type||'bandpass';f.Q.value=o.q||1;f.frequency.setValueAtTime(o.f0||1000,t0);
+    if(o.f1)f.frequency.exponentialRampToValueAtTime(o.f1,t0+dur);const g=c.createGain();env(g,t0,o.a||0.005,o.g||0.2,dur);s.connect(f);f.connect(g);out(g,o.wet!==false);s.start(t0);s.stop(t0+dur+0.05)}
+  function layer(type,f0,q,gk,fk){const s=c.createBufferSource();s.buffer=nb;s.loop=true;const f=c.createBiquadFilter();f.type=type;f.Q.value=q;const g=c.createGain();s.connect(f);f.connect(g);out(g,false);
+    keys(g.gain,gk);if(fk)keys(f.frequency,fk);else f.frequency.value=f0;s.start(0)}
+  // score: a low drone that changes chord per scene and drops out right before impact
+  const ROOT=[33,33,35,28,28,31,33,29,26], dF=c.createBiquadFilter(); dF.type='lowpass'; const dG=c.createGain(); dF.connect(dG); out(dG);
+  keys(dG.gain,[[0,0],[1.5,0.07],[7,0.08],[14,0.1],[19.5,0.12],[19.8,0],[22.5,0],[25,0.06],[33,0.08],[41,0.07],[48,0.08],[54,0.12],[59.8,0]]);
+  keys(dF.frequency,[[0,380],[7,600],[14,900],[19.5,1600],[22,300],[33,700],[41,600],[54,420],[60,300]]);
+  [0,7,12,15].forEach((iv,vi)=>[-7,7].forEach(det=>{const o=c.createOscillator();o.type=vi?'sawtooth':'triangle';o.detune.value=det;
+    SC.forEach((s,k)=>o.frequency.setTargetAtTime(mf(ROOT[k]+iv),Math.max(0,s.t0-0.05),0.3));const g=c.createGain();g.gain.value=vi?0.22:0.6;o.connect(g);g.connect(dF);o.start(0)}));
+  // space hush, entry roar, city traffic, wind
+  layer('lowpass',300,0.7,[[0,0],[0.5,0.05],[6.8,0.05],[7.2,0],[60,0]]);
+  layer('bandpass',0,0.9,[[0,0],[7,0],[8,0.05],[14,0.12],[19.6,0.35],[19.85,0],[60,0]],[[0,200],[7,250],[14,500],[19.6,1400],[20,300],[60,300]]);
+  layer('lowpass',500,0.6,[[0,0],[14,0],[14.3,0.06],[19.5,0.06],[19.8,0],[60,0]]);
+  layer('lowpass',0,0.5,[[0,0],[20.4,0],[21,0.55],[24,0.3],[33,0.12],[41,0.1],[44.4,0.12],[44.8,0.45],[47.5,0.2],[54,0.12],[59,0.05],[60,0]],[[0,90],[20.4,90],[21,160],[30,120],[44.6,500],[47,200],[60,120]]);
+  // a whistle that climbs as the rock gets close
+  {const o=c.createOscillator();o.type='sine';keys(o.frequency,[[0,200],[14,220],[19.8,1800]]);const g=c.createGain();keys(g.gain,[[0,0],[15,0],[17,0.02],[19.7,0.06],[19.85,0],[60,0]]);o.connect(g);out(g);o.start(0)}
+  // crackle of the burning rock
+  for(let x=8;x<19.8;x+=0.04+R()*0.12) nz(x,0.03,{type:'highpass',f0:2500+R()*3000,g:0.02+0.08*((x-8)/12)*R(),wet:false});
+  // city: a car horn and a phone notification before it all goes quiet
+  tone(14.6,420,0.35,{type:'square',g:0.04,lp:1500,wet:false}); tone(14.6,520,0.35,{type:'square',g:0.03,lp:1500,wet:false});
+  tone(15.4,1320,0.08,{g:0.05});tone(15.52,1760,0.12,{g:0.05});
+  for(let x=15;x<20;x+=1) tone(x,x<19?880:1320,0.09,{type:'square',g:0.03,lp:3000,wet:false});
+  // the impact: a deep boom, a wide crunch, ringing ears
+  tone(20,48,6,{glide:20,g:1.0,wet:true}); tone(20,90,2.4,{glide:30,g:0.6,wet:false});
+  nz(20,4,{type:'lowpass',f0:3000,f1:150,g:0.6,a:0.01}); nz(20,0.8,{type:'highpass',f0:1500,g:0.25});
+  tone(20.4,4200,4,{g:0.025,a:0.4,wet:false});
+  // debris thuds raining down
+  for(let x=21;x<26;x+=0.12+R()*0.35) {tone(x,60+R()*50,0.3,{glide:35,g:0.12+R()*0.15,wet:false});nz(x,0.15,{type:'lowpass',f0:600,g:0.06,wet:false})}
+  // the shockwave map: a thump as each place is reached
+  PLACES.forEach(pl=>{let lo=33.3,hi=40.5;for(let i=0;i<30;i++){const m=(lo+hi)/2;if(ringR(m)/1000<pl.km)lo=m;else hi=m}tone(hi,70,0.6,{glide:40,g:0.5,wet:false});tone(hi,mf(57),0.8,{type:'triangle',g:0.05})});
+  // Makati: glass breaking when the blast arrives
+  for(let i=0;i<70;i++){const x=44.6+R()*1.6;tone(x,2500+R()*4500,0.12+R()*0.25,{g:0.02+R()*0.04,wet:true})}
+  nz(44.6,1.4,{type:'highpass',f0:3500,g:0.18,a:0.01}); tone(44.6,55,2.5,{glide:25,g:0.7});
+  // afterwards: distant sirens
+  [[48.5,0.035],[50,0.025]].forEach(([x,g])=>{const o=c.createOscillator();o.type='triangle';for(let y=x;y<54;y+=1.6){o.frequency.setValueAtTime(650,y);o.frequency.linearRampToValueAtTime(980,y+0.8);o.frequency.linearRampToValueAtTime(650,y+1.6)}
+    const gg=c.createGain();env(gg,x,1,g,6);const f=c.createBiquadFilter();f.frequency.value=1600;o.connect(f);f.connect(gg);out(gg);o.start(x);o.stop(x+6.1)});
+  // end
+  tone(54.2,52,3.5,{glide:26,g:0.8}); [57,60,64].forEach((m,i)=>tone(57.2+i*0.03,mf(m),2.6,{type:'triangle',g:0.06}));
+  return c.startRendering();
+}
+function wavBytes(buf){
+  const ch=buf.numberOfChannels,n=buf.length,sr=buf.sampleRate,dv=new DataView(new ArrayBuffer(44+n*ch*2));
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)dv.setUint8(o+i,s.charCodeAt(i))};
+  ws(0,'RIFF');dv.setUint32(4,36+n*ch*2,true);ws(8,'WAVE');ws(12,'fmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,ch,true);
+  dv.setUint32(24,sr,true);dv.setUint32(28,sr*ch*2,true);dv.setUint16(32,ch*2,true);dv.setUint16(34,16,true);ws(36,'data');dv.setUint32(40,n*ch*2,true);
+  const d=[...Array(ch)].map((_,k)=>buf.getChannelData(k));let o=44;
+  for(let i=0;i<n;i++)for(let k=0;k<ch;k++){const v=Math.max(-1,Math.min(1,d[k][i]));dv.setInt16(o,v<0?v*0x8000:v*0x7fff,true);o+=2}
+  return new Uint8Array(dv.buffer);
+}
+
+/* ---------- export hooks for rendering the MP4 ---------- */
+const fontsReady=document.fonts.load('400 40px Newsreader').then(()=>Promise.all(['500 40px Newsreader','400 20px "IBM Plex Mono"','500 20px "IBM Plex Mono"'].map(f=>document.fonts.load(f))));
+if(EXPORT){
+  view.width=1080; view.height=1920; view.style.width='270px'; view.style.height='480px';
+  renderer.setPixelRatio(1); renderer.setSize(1080,1920,false); camera.aspect=1080/1920; camera.updateProjectionMatrix();
+  window.__frame=t=>{drawFrame(t);return view.toDataURL('image/jpeg',0.92).split(',')[1]};
+  window.__audio=async()=>{const b=wavBytes(await buildScore());let s='';for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(s)};
+  fontsReady.then(()=>{window.__ready=true});
+  return;
+}
+
+/* ---------- live playback ---------- */
+const viewport=$('viewport'), controls=document.querySelector('.controls');
+function fit(){
+  const vw=viewport.clientWidth, vh=viewport.clientHeight; let h=vh, w=h*9/16; if(w>vw){w=vw;h=w*16/9}
+  w=Math.max(1,Math.floor(w)); h=Math.max(1,Math.floor(h)); const dpr=Math.min(window.devicePixelRatio||1,2);
+  view.style.width=w+'px'; view.style.height=h+'px'; controls.style.width=w+'px';
+  view.width=Math.round(w*dpr); view.height=Math.round(h*dpr);
+  renderer.setPixelRatio(1); renderer.setSize(view.width,view.height,false); camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(fit).observe(viewport); fit();
+const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let t=0, playing=!reduce, last=performance.now();
+const playBtn=$('play'), sndBtn=$('snd'), scrub=$('scrub'), clock=$('clock');
+const mmss=x=>Math.floor(x/60)+':'+String(Math.floor(x%60)).padStart(2,'0');
+const syncBtn=()=>{playBtn.textContent=playing?'Pause':'Play'};
+playBtn.addEventListener('click',()=>{playing=!playing;syncBtn()});
+scrub.addEventListener('input',()=>{t=parseFloat(scrub.value)||0});
+const S={on:false,ctx:null,buf:null,src:null,gain:null,lastT:null};
+function stopSrc(){if(S.src){try{S.src.stop()}catch(e){}S.src=null}}
+sndBtn.addEventListener('click',()=>{
+  S.on=!S.on; sndBtn.setAttribute('aria-pressed',S.on);
+  if(!S.on){stopSrc();sndBtn.textContent='Sound off';return}
+  if(!S.ctx){S.ctx=new (window.AudioContext||window.webkitAudioContext)();S.gain=S.ctx.createGain();S.gain.connect(S.ctx.destination)}
+  S.ctx.resume(); if(!playing){playing=true;syncBtn()}
+  if(S.buf){sndBtn.textContent='Sound on';S.lastT=null;return}
+  sndBtn.textContent='Loading…';
+  buildScore().then(b=>{S.buf=b;S.lastT=null;if(S.on)sndBtn.textContent='Sound on'}).catch(()=>{sndBtn.textContent='No sound';S.on=false});
+});
+function soundTick(t){
+  if(!S.on||!S.buf) return;
+  if(!playing){stopSrc();S.lastT=null;return}
+  if(!(S.src&&S.lastT!==null&&t>=S.lastT&&t-S.lastT<0.3)){stopSrc();const s=S.ctx.createBufferSource();s.buffer=S.buf;s.connect(S.gain);s.start(0,Math.min(t,DUR-0.01));S.src=s}
+  S.lastT=t;
+}
+syncBtn();
+function frame(now){
+  const dt=Math.min(0.1,(now-last)/1000); last=now;
+  if(playing){t+=dt;if(t>=DUR)t=0}
+  drawFrame(t); soundTick(t);
+  if(document.activeElement!==scrub) scrub.value=t.toFixed(2);
+  const c=mmss(t); if(clock.textContent!==c) clock.textContent=c;
+  requestAnimationFrame(frame);
+}
+fontsReady.finally(()=>requestAnimationFrame(frame));
+})();
+</script>

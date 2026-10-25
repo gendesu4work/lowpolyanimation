@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Channel Dashboard</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2; --surface-1: #fcfcfb; --line: #e4e3df;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8a8984;
+  --youtube: #2a78d6; --facebook: #eb6834; --instagram: #1baf7a; --tiktok: #eda100;
+  --good: #1a7f37; --bad: #c4312f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-0: #111110; --surface-1: #1a1a19; --line: #2c2c2a;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --youtube: #3987e5; --facebook: #d95926; --instagram: #199e70; --tiktok: #c98500;
+    --good: #4cc26a; --bad: #ef6b69;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #111110; --surface-1: #1a1a19; --line: #2c2c2a;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --youtube: #3987e5; --facebook: #d95926; --instagram: #199e70; --tiktok: #c98500;
+  --good: #4cc26a; --bad: #ef6b69;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1120px; margin: 0 auto; padding: 28px 16px 56px; }
+.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+h1 { font-size: 22px; margin: 0; }
+.sub { color: var(--text-secondary); font-size: 13px; }
+button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-1); color: var(--text-primary); cursor: pointer; }
+button:disabled { opacity: .6; cursor: progress; }
+.card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.hero { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+.hero .value { font-size: 52px; font-weight: 650; line-height: 1; font-variant-numeric: proportional-nums; }
+.hero .label { color: var(--text-secondary); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile .name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.tile .acct { color: var(--text-muted); font-size: 12px; margin: 2px 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .big { font-size: 28px; font-weight: 650; line-height: 1.1; }
+.tile .unit { color: var(--text-secondary); font-size: 13px; }
+.delta { font-size: 13px; font-weight: 600; }
+.delta.up { color: var(--good); } .delta.down { color: var(--bad); } .delta.flat { color: var(--text-muted); }
+.tile .extra { color: var(--text-secondary); font-size: 13px; margin-top: 6px; }
+.tile svg { display: block; width: 100%; height: 44px; margin-top: 10px; overflow: visible; }
+.tile .empty { color: var(--text-muted); font-size: 12px; margin-top: 10px; }
+h2 { font-size: 16px; margin: 0 0 4px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--text-secondary); font-size: 13px; margin: 6px 0 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.bars { display: grid; gap: 10px; }
+.bar-row { display: grid; grid-template-columns: minmax(120px, 260px) 1fr auto; gap: 12px; align-items: center; font-size: 13px; }
+.bar-row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.track { display: flex; gap: 2px; height: 16px; }
+.seg { height: 100%; min-width: 2px; }
+.seg:first-child { border-radius: 0; } .seg:last-child { border-radius: 0 4px 4px 0; }
+.bar-row .v { font-variant-numeric: tabular-nums; color: var(--text-primary); min-width: 56px; text-align: right; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 600; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+th.num { text-align: right; }
+.status { color: var(--text-muted); font-size: 12px; }
+.status.failed, .status.retry { color: var(--bad); }
+.wrap { overflow-x: auto; }
+.section { margin-top: 16px; }
+.muted { color: var(--text-muted); }
+#tip { position: fixed; pointer-events: none; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; z-index: 10; white-space: nowrap; }
+a { color: var(--youtube); }
+@media (max-width: 560px) { .bar-row { grid-template-columns: 1fr auto; } .bar-row .t { grid-column: 1 / -1; } .hero .value { font-size: 44px; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div><h1>Channel dashboard</h1><div class="sub" id="updated">Loading…</div></div>
+    <button id="refresh" type="button">Refresh numbers</button>
+  </div>
+
+  <div class="card hero"><span class="value" id="total">–</span><span class="label">total followers across all platforms</span></div>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="card section">
+    <h2>Views per video</h2>
+    <div class="sub">Latest numbers, split by platform</div>
+    <div class="legend" id="legend"></div>
+    <div class="bars" id="bars"></div>
+  </div>
+
+  <div class="card section">
+    <h2>All videos</h2>
+    <div class="wrap"><table id="table"></table></div>
+  </div>
+</main>
+<div id="tip"></div>
+<script>
+const PLATFORMS = [
+  { id: 'youtube', name: 'YouTube', unit: 'subscribers' },
+  { id: 'facebook', name: 'Facebook', unit: 'followers' },
+  { id: 'instagram', name: 'Instagram', unit: 'followers' },
+  { id: 'tiktok', name: 'TikTok', unit: 'followers' },
+];
+const $ = id => document.getElementById(id);
+const fmt = n => n == null ? '–' : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M' : n >= 1e4 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1).replace(/\.0$/, '') + 'K' : n.toLocaleString();
+const full = n => n == null ? '–' : n.toLocaleString();
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const tip = $('tip');
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = 'block'; const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + 'px'; tip.style.top = (e.clientY + 14) + 'px'; }
+const hideTip = () => { tip.style.display = 'none'; };
+
+// Follower trend for one platform, on its own scale (platform sizes differ by orders of magnitude).
+function sparkline(p, history) {
+  const pts = history.filter(h => h[p.id] && h[p.id].followers != null).map(h => ({ d: h.date, v: h[p.id].followers }));
+  if (pts.length < 2) return '<div class="empty">Growth line appears after 2 days of data</div>';
+  const W = 240, H = 44, lo = Math.min(...pts.map(q => q.v)), hi = Math.max(...pts.map(q => q.v)), span = hi - lo || 1;
+  const xy = pts.map((q, i) => [i / (pts.length - 1) * W, H - 4 - (q.v - lo) / span * (H - 8)]);
+  const line = xy.map(([x, y], i) => (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ');
+  const [lx, ly] = xy[xy.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" data-p="${p.id}" role="img" aria-label="${p.name} followers over ${pts.length} days">
+    <path d="${line} L${W} ${H} L0 ${H} Z" fill="var(--${p.id})" opacity=".1"/>
+    <path d="${line}" fill="none" stroke="var(--${p.id})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+    <circle cx="${lx}" cy="${ly}" r="4" fill="var(--${p.id})" stroke="var(--surface-1)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+    <rect width="${W}" height="${H}" fill="transparent" class="hit"/>
+  </svg>`;
+}
+
+function render(d) {
+  const latest = d.accounts.latest || {}, history = d.accounts.history || [];
+  const times = Object.values(latest).map(a => a.at).filter(Boolean).sort();
+  $('updated').textContent = times.length ? 'Updated ' + new Date(times[times.length - 1]).toLocaleString() : 'No numbers yet: click Refresh';
+  const total = PLATFORMS.reduce((s, p) => s + ((latest[p.id] || {}).followers || 0), 0);
+  $('total').textContent = full(total);
+
+  // tiles: followers, change vs 7 days ago, extra totals, trend
+  const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  $('tiles').innerHTML = PLATFORMS.map(p => {
+    const a = latest[p.id];
+    if (!a) return `<div class="card tile"><div class="name"><span class="swatch" style="background:var(--${p.id})"></span>${p.name}</div><div class="acct">Not connected yet</div><div class="big muted">–</div></div>`;
+    const base = history.filter(h => h.date <= weekAgo && h[p.id] && h[p.id].followers != null).pop() || history.find(h => h[p.id] && h[p.id].followers != null);
+    let delta = '';
+    if (base && a.followers != null && base.date !== history[history.length - 1].date) {
+      const dv = a.followers - base[p.id].followers;
+      delta = `<span class="delta ${dv > 0 ? 'up' : dv < 0 ? 'down' : 'flat'}">${dv > 0 ? '▲ +' : dv < 0 ? '▼ ' : ''}${full(dv)} since ${new Date(base.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>`;
+    }
+    const extra = [a.views != null && `${fmt(a.views)} total views`, a.likes != null && `${fmt(a.likes)} likes`, a.posts != null && `${full(a.posts)} posts`].filter(Boolean).join(' · ');
+    return `<div class="card tile"><div class="name"><span class="swatch" style="background:var(--${p.id})"></span>${p.name}</div>
+      <div class="acct">${esc(a.name)}</div>
+      <div><span class="big">${a.followers == null ? '–' : full(a.followers)}</span> <span class="unit">${p.unit}</span></div>
+      ${delta}${extra ? `<div class="extra">${extra}</div>` : ''}${sparkline(p, history)}</div>`;
+  }).join('');
+  document.querySelectorAll('.tile svg').forEach(svg => {
+    const p = PLATFORMS.find(q => q.id === svg.dataset.p);
+    const pts = history.filter(h => h[p.id] && h[p.id].followers != null);
+    svg.addEventListener('mousemove', e => { const r = svg.getBoundingClientRect(); const i = Math.round((e.clientX - r.left) / r.width * (pts.length - 1)); const h = pts[Math.max(0, Math.min(pts.length - 1, i))]; showTip(e, `<b>${new Date(h.date).toLocaleDateString()}</b><br>${full(h[p.id].followers)} ${p.unit}`); });
+    svg.addEventListener('mouseleave', hideTip);
+  });
+
+  // views per video, stacked by platform
+  const vids = d.videos.filter(v => v.scheduledAt).sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt));
+  const used = PLATFORMS.filter(p => vids.some(v => v.platforms[p.id] && v.platforms[p.id].stats));
+  $('legend').innerHTML = used.map(p => `<span><span class="swatch" style="background:var(--${p.id})"></span>${p.name}</span>`).join('');
+  const withViews = vids.map(v => ({ v, parts: used.map(p => ({ p, n: (v.platforms[p.id] && v.platforms[p.id].stats && v.platforms[p.id].stats.views) || 0 })) }))
+    .map(r => ({ ...r, total: r.parts.reduce((s, x) => s + x.n, 0) })).filter(r => r.total > 0).slice(0, 15);
+  const max = Math.max(1, ...withViews.map(r => r.total));
+  $('bars').innerHTML = withViews.length ? withViews.map((r, i) => `<div class="bar-row"><span class="t" title="${esc(r.v.title)}">${esc(r.v.headline || r.v.title)}</span>
+      <div class="track" style="width:${(r.total / max * 100).toFixed(1)}%" data-i="${i}">${r.parts.filter(x => x.n).map(x => `<div class="seg" style="flex:${x.n};background:var(--${x.p.id})"></div>`).join('')}</div>
+      <span class="v">${fmt(r.total)}</span></div>`).join('')
+    : '<div class="muted">View counts show up here once videos are posted and the stats refresh (every 6 hours, or click Refresh).</div>';
+  document.querySelectorAll('.track').forEach(el => {
+    const r = withViews[+el.dataset.i];
+    el.addEventListener('mousemove', e => showTip(e, `<b>${esc(r.v.headline || r.v.title)}</b><br>` + r.parts.map(x => `<span class="swatch" style="display:inline-block;background:var(--${x.p.id})"></span> ${x.p.name}: ${full(x.n)}`).join('<br>')));
+    el.addEventListener('mouseleave', hideTip);
+  });
+
+  // table of every video
+  const rows = [...d.videos].sort((a, b) => (b.scheduledAt || '9').localeCompare(a.scheduledAt || '9'));
+  $('table').innerHTML = `<thead><tr><th>Video</th><th>Posted</th>${PLATFORMS.map(p => `<th class="num">${p.name}</th>`).join('')}</tr></thead><tbody>` +
+    (rows.length ? rows.map(v => `<tr><td>${esc(v.headline || v.title || v.folder)}</td><td>${v.scheduledAt ? new Date(v.scheduledAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '<span class="muted">not posted</span>'}</td>` +
+      PLATFORMS.map(p => { const s = v.platforms[p.id]; if (!s) return '<td class="num muted">–</td>';
+        const views = s.stats ? full(s.stats.views) : '';
+        const label = views ? (s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${views}</a>` : views) : '';
+        return `<td class="num">${label}${label ? '<br>' : ''}<span class="status ${s.status}" title="${esc(s.error || '')}">${s.status}</span></td>`; }).join('') + '</tr>').join('')
+    : `<tr><td colspan="${2 + PLATFORMS.length}" class="muted">No videos yet.</td></tr>`) + '</tbody>';
+}
+
+async function load(url, opts) {
+  const r = await fetch(url, opts), d = await r.json();
+  if (d.error) throw new Error(d.error);
+  render(d);
+}
+$('refresh').addEventListener('click', async () => {
+  const b = $('refresh'); b.disabled = true; b.textContent = 'Refreshing…';
+  try { await load('/api/refresh', { method: 'POST' }); } catch (e) { $('updated').textContent = 'Refresh failed: ' + e.message; }
+  b.disabled = false; b.textContent = 'Refresh numbers';
+});
+load('/api/data').catch(e => { $('updated').textContent = 'Could not load: ' + e.message; });
+</script>
+</body>
+</html>

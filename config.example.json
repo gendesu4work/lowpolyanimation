@@ -1,0 +1,64 @@
+{
+  "audienceTimezone": "America/New_York",
+  "candidateHours": [
+    7,
+    9,
+    12,
+    15,
+    18,
+    20,
+    22
+  ],
+  "defaultHours": [
+    12,
+    18,
+    20
+  ],
+  "postsPerDay": 1,
+  "minHoursBetweenPosts": 20,
+  "explore": 0.25,
+  "aiDisclosure": true,
+  "platforms": {
+    "youtube": {
+      "mode": "own",
+      "enabled": true,
+      "clientId": "",
+      "clientSecret": "",
+      "categoryId": "24",
+      "manualPublish": true
+    },
+    "facebook": {
+      "mode": "own",
+      "enabled": true
+    },
+    "instagram": {
+      "mode": "own",
+      "enabled": true,
+      "appId": "",
+      "appSecret": ""
+    },
+    "meta": {
+      "appId": "",
+      "appSecret": "",
+      "graphVersion": "v23.0",
+      "pageId": ""
+    },
+    "tiktok": {
+      "mode": "own",
+      "enabled": true,
+      "clientKey": "",
+      "clientSecret": "",
+      "privacy": "SELF_ONLY",
+      "viewStats": true,
+      "accountStats": true
+    },
+    "buffer": {
+      "apiKey": "",
+      "hosting": {
+        "netlifyToken": "",
+        "siteId": "",
+        "siteUrl": "https://YOUR-MEDIA-SITE.netlify.app"
+      }
+    }
+  }
+}

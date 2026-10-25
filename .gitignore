@@ -1,0 +1,12 @@
+node_modules/
+config.json
+secrets/*
+!secrets/.gitkeep
+data/*
+!data/.gitkeep
+videos/*
+!videos/.gitkeep
+assets/models/*
+!assets/models/.gitkeep
+trainer/*
+!trainer/.gitkeep
