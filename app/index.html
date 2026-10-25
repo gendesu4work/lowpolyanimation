@@ -829,7 +829,8 @@ function renderDash() {
 }
 
 function renderComments() {
-  const c = state.comments; if (!c) return;
+  const c = state.comments;
+  if (!c) { $("comments-box").replaceChildren(el("p", { text: "The Comments tool needs the newer app: click Quit Shorts Studio, then open it again." })); $("comments-list").replaceChildren(); return; }
   const sw = (id, name) => el("label", { class: "modelpick" }, el("span", { text: name + (c.ready[id] ? "" : " (sign in again first)") }),
     el("select", { onchange: e => post("/api/comments/settings", { platforms: { [id]: e.target.value === "on" } }) }, el("option", { value: "on", ...(c.platforms[id] ? { selected: "" } : {}) }, "Reply"), el("option", { value: "off", ...(c.platforms[id] ? {} : { selected: "" }) }, "Leave alone")));
   const last = c.lastRun ? "Last check " + new Date(c.lastRun.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ": " + c.lastRun.replied + " replied, " + c.lastRun.skipped + " skipped" + (c.lastRun.problems.length ? " · " + c.lastRun.problems.join(" · ") : "") : "Nothing checked yet.";
@@ -983,7 +984,7 @@ function apply(d) {
   state.usage = d.usage; state.settings = d.settings;
   const run = state.jobs.find(j => j.status === "working"), pcKey = JSON.stringify([state.claude && state.claude.ok, run && run.id, run && run.note, d.usage && d.usage.today, d.settings]);
   if (pcKey !== apply.pcKey) { apply.pcKey = pcKey; renderPC(); }
-  state.comments = d.comments; { const ck = JSON.stringify(d.comments); if (ck !== apply.cKey) { apply.cKey = ck; renderComments(); } }
+  state.comments = d.comments; { const ck = String(JSON.stringify(d.comments)); if (ck !== apply.cKey) { apply.cKey = ck; renderComments(); } }
   renderPipeline(); renderIdeas(); renderJobs(); renderPosted(); renderDash(); renderUsage();
   // keep a half-typed change request and the playing video: only rebuild reviews when they changed
   const key = JSON.stringify(reviewVideos().map(v => [v.id, v.updatedAt, !!pendingJob(v.id), v.models]));
