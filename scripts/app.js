@@ -357,7 +357,7 @@ async function runJob(job) {
       writeJson(SUGGEST, { at, lastAdded: packs.length, packs: [...packs, ...prev.packs], styles: [...styles, ...prev.styles] });
       patchJob(job.id, { status: 'done', note: `Found ${packs.length} new packs` });
     } else if (job.kind === 'post') {
-      const { code, out } = await node([path.join(__dirname, 'publish.js'), dir]);
+      const { code, out } = await node([path.join(__dirname, 'publish.js'), dir, ...(job.at ? ['--at', job.at] : ['--now'])]);
       fs.writeFileSync(logFile, out);
       if (jobs.all().find(j => j.id === job.id).status === 'cancelled') return;
       if (code !== 0) throw new Error(out.trim().split('\n').pop());
@@ -521,7 +521,13 @@ http.createServer(async (req, res) => {
     if (parts[1] === 'ideas' && parts[3] === 'dismiss') { patchIdea(parts[2], { status: 'dismissed' }); return json(res, state()); }
     if (parts[1] === 'jobs' && parts[3] === 'cancel') { cancelJob(parts[2]); return json(res, state()); }
     if (parts[1] === 'jobs' && parts[3] === 'clear') { patchJob(parts[2], { status: 'cleared' }); return json(res, state()); }
-    if (parts[1] === 'videos' && parts[3] === 'post') { addJob('post', parts[2]); return json(res, state()); }
+    if (parts[1] === 'videos' && parts[3] === 'post') {
+      // when: "now" posts straight away; otherwise "at" is the time (ISO) you chose
+      let at = null;
+      if (b.when === 'at') { at = new Date(b.at); if (isNaN(at) || at.getTime() < Date.now() + 60e3) throw new Error('Pick a time in the future'); at = at.toISOString(); }
+      addJob('post', parts[2], { at });
+      return json(res, state());
+    }
     if (parts[1] === 'videos' && parts[3] === 'revise') { if (!String(b.feedback || '').trim()) throw new Error('Describe the changes first'); addJob('revise', parts[2], { feedback: String(b.feedback).slice(0, 1000) }); return json(res, state()); }
     if (parts[1] === 'videos' && parts[3] === 'discard') { discardVideo(parts[2]); return json(res, state()); }
     if (url === '/api/trainer/notes') { trainer.addNote(b.text); return json(res, state()); }

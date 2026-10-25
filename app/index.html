@@ -687,9 +687,11 @@ function renderReviews() {
     const busy = pendingJob(v.id);
     const fb = el("textarea", { class: "field", id: "fb-" + v.id, placeholder: "Request changes: slower ending, bigger captions, a different ocean color…", "aria-label": "Changes to request" });
     const btns = el("div", { class: "btns" });
-    const confirm = el("div", { class: "confirmbox", hidden: "" }, el("span", { text: postSummary() }),
+    const when = el("select", { class: "field", "aria-label": "When to post", onchange: () => { at.hidden = when.value !== "at"; } }, el("option", { value: "now" }, "Post now"), el("option", { value: "at" }, "Pick a time"));
+    const at = el("input", { type: "datetime-local", class: "field", hidden: "", "aria-label": "Post at" });
+    const confirm = el("div", { class: "confirmbox", hidden: "" }, el("span", { text: postSummary() }), el("div", { class: "btns" }, when, at),
       el("div", { class: "btns" }, el("button", { class: "btn quiet sm", type: "button", onclick: () => { confirm.hidden = true; btns.hidden = false; } }, "Cancel"),
-        el("button", { class: "btn primary sm", type: "button", onclick: () => requestJob("post", v) }, icon("post"), "Yes, post it")));
+        el("button", { class: "btn primary sm", type: "button", onclick: () => { if (when.value === "at" && (!at.value || new Date(at.value) < Date.now() + 60e3)) { status("Pick a time in the future."); at.focus(); return; } post("/api/videos/" + v.id + "/post", when.value === "at" ? { when: "at", at: new Date(at.value).toISOString() } : { when: "now" }); } }, icon("post"), "Yes, post it")));
     const discard = twoStep("Discard", "Confirm discard", () => discardVideo(v));
     discard.style.marginRight = "auto";
     if (busy) btns.append(discard, el("span", { class: "pill working", text: busy.kind === "post" ? "Posting requested" : "Revision requested" }));
