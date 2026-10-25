@@ -6,6 +6,7 @@ const { P, readJson, writeJson, listVideos, saveMeta, openBrowser, log, tokens }
 const claude = require('./lib/claude');
 const trainer = require('./lib/trainer');
 const comments = require('./comments');
+const cancel = require('./lib/cancel');
 const models = require('./lib/models');
 const SUGGEST = path.join(P.root, 'data', 'suggestions.json');
 
@@ -73,6 +74,7 @@ function patchIdea(iid, fields) { const all = ideas.all(), i = all.find(x => x.i
 function stage(meta) {
   const st = Object.values(meta.platforms || {}).map(s => s.status);
   if (!st.length) return (meta.studio && meta.studio.stage) || 'review';
+  if (st.every(s => s === 'cancelled')) return 'review'; // everything was cancelled: back to approving it
   return st.every(s => s === 'failed') ? 'failed' : 'posted';
 }
 const manualCaption = (dir, x) => { try { return fs.readFileSync(path.join(dir, x.caption), 'utf8'); } catch { return null; } };
@@ -83,7 +85,7 @@ function videoList() {
       id: folder, headline: meta.headline || meta.title, title: meta.title, description: meta.description || '', hashtags: meta.hashtags || [],
       stage: stage(meta), scheduledAt: meta.scheduledAt || null, durationSec: s.durationSec || null, models: modelsUsed(dir),
       videoUrl: `/media/${folder}/video.mp4`, posterUrl: fs.existsSync(path.join(dir, 'poster.jpg')) ? `/media/${folder}/poster.jpg` : null,
-      platforms: Object.fromEntries(Object.entries(meta.platforms || {}).map(([p, x]) => [p, { status: x.status, url: x.url || null, studio: x.studio || null, views: x.stats ? x.stats.views : null, caption: x.status === 'manual' ? manualCaption(dir, x) : null }])),
+      platforms: Object.fromEntries(Object.entries(meta.platforms || {}).map(([p, x]) => [p, { status: x.status, url: x.url || null, studio: x.studio || null, views: x.stats ? x.stats.views : null, caption: x.status === 'manual' ? manualCaption(dir, x) : null, cancellable: cancel.pending(x) }])),
       createdAt: s.createdAt || fs.statSync(path.join(dir, 'meta.json')).birthtime.toISOString(), updatedAt: s.updatedAt || null,
     };
   });
@@ -529,6 +531,14 @@ http.createServer(async (req, res) => {
       return json(res, state());
     }
     if (parts[1] === 'videos' && parts[3] === 'revise') { if (!String(b.feedback || '').trim()) throw new Error('Describe the changes first'); addJob('revise', parts[2], { feedback: String(b.feedback).slice(0, 1000) }); return json(res, state()); }
+    if (parts[1] === 'videos' && parts[3] === 'cancel') {
+      const dir = path.join(P.videos, path.basename(parts[2])), meta = readJson(path.join(dir, 'meta.json'));
+      const r = await cancel.cancelScheduled(dir, meta);
+      if (!r.cancelled.length && !Object.keys(r.failed).length) throw new Error('Nothing here can be cancelled: it has already gone out or is about to');
+      const failed = Object.entries(r.failed).map(([p, m]) => p + ': ' + m);
+      if (failed.length) throw new Error((r.cancelled.length ? 'Cancelled ' + r.cancelled.join(', ') + '. ' : '') + "Couldn't cancel " + failed.join(' | '));
+      return json(res, state());
+    }
     if (parts[1] === 'videos' && parts[3] === 'discard') { discardVideo(parts[2]); return json(res, state()); }
     if (url === '/api/trainer/notes') { trainer.addNote(b.text); return json(res, state()); }
     if (parts[1] === 'trainer' && parts[2] === 'notes' && parts[4] === 'update') { trainer.updateNote(parts[3], b); return json(res, state()); }

@@ -736,7 +736,8 @@ function renderPosted() {
   const box = $("posted"), list = postedVideos();
   if (!list.length) { box.replaceChildren(empty("post", "Nothing posted yet", "Approved videos and their status on each platform appear here.")); return; }
   box.replaceChildren(...list.map(v => el("div", { class: "lrow", style: "grid-template-columns:minmax(0,1fr) auto" },
-    el("div", { class: "ttl" }, el("b", { text: v.title || v.headline }), el("span", { text: v.scheduledAt ? "Scheduled for " + when(v.scheduledAt) : "" })), platChips(v))));
+    el("div", { class: "ttl" }, el("b", { text: v.title || v.headline }), el("span", { text: v.scheduledAt ? "Scheduled for " + when(v.scheduledAt) : "" })),
+    el("div", { class: "btns" }, platChips(v), Object.values(v.platforms || {}).some(s => s.cancellable) ? twoStep("Cancel scheduled", "Confirm cancel", () => post("/api/videos/" + v.id + "/cancel")) : ""))));
 }
 
 // ---------- actions ----------
