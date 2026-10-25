@@ -1,6 +1,6 @@
 // Run every 15 minutes by Windows Task Scheduler: posts queued Instagram/TikTok uploads that are due, retries failures, refreshes stats every 6 hours.
 const fs = require('fs');
-const { P, readJson, writeJson, listVideos, log } = require('./lib/common');
+const { P, readJson, writeJson, listVideos, log, config } = require('./lib/common');
 const { postTo } = require('./lib/platforms');
 const { refreshStats, checkYouTubePublished } = require('./stats');
 const { refreshAccounts } = require('./accounts');
@@ -18,6 +18,7 @@ const STATS_EVERY = 6 * 3600e3, STALE_LOCK = 60 * 60e3;
       for (const [p, s] of Object.entries(meta.platforms || {}))
         if (s.status === 'queued' || s.status === 'retry') await postTo(p, dir, meta);
     }
+    try { if ((config().platforms.buffer || {}).apiKey) await require('./platforms/buffer').syncPosts(listVideos()); } catch (e) { log('buffer sync skipped: ' + e.message); }
     try { await checkYouTubePublished(); } catch (e) { log('youtube publish check skipped: ' + e.message); }
     const state = readJson(P.state, {});
     if (!state.lastStats || Date.now() - state.lastStats > STATS_EVERY) {

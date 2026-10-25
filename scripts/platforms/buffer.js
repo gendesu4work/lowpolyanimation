@@ -73,4 +73,23 @@ function forPlatform(platform, captionFor) {
   return { publish: publisher(platform, captionFor), stats: async () => ({}), account: async () => ({ name: '(via Buffer)', followers: null, views: null, posts: null }), nativeSchedule: true, auth };
 }
 
-module.exports = { auth, forPlatform, lit };
+// Buffer posts start as "scheduled" here; once Buffer has sent one, mark it posted and keep its link (or mark it failed).
+async function syncPosts(videos) {
+  let changed = 0;
+  for (const { dir, meta } of videos) {
+    let touched = false;
+    for (const [p, s] of Object.entries(meta.platforms || {})) {
+      if (s.via !== 'buffer' || s.status !== 'scheduled' || Date.parse(s.scheduledFor || 0) > Date.now() + 60e3) continue;
+      try {
+        const r = (await gql(`query { post(input: { id: ${lit(s.id)} }) { status sentAt externalLink } }`)).post;
+        if (!r) continue;
+        if (r.status === 'sent') { Object.assign(s, { status: 'posted', url: r.externalLink || s.url || null, sentAt: r.sentAt }); touched = true; }
+        else if (r.status === 'error' || r.status === 'failed') { Object.assign(s, { status: 'failed', error: 'Buffer could not publish this post: open it in Buffer to see why' }); touched = true; }
+      } catch (e) { /* Buffer unreachable or the post is gone: try again next time */ }
+    }
+    if (touched) { require('../lib/common').saveMeta(dir, meta); changed++; }
+  }
+  return changed;
+}
+
+module.exports = { auth, forPlatform, lit, syncPosts };
