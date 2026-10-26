@@ -12,6 +12,30 @@ if (!fs.existsSync(page_)) { console.error('no page.html or plan.json in ' + dir
 
 const ffmpeg = args => execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { stdio: 'inherit' });
 
+// Sounds from the Soundtracks library named in plan.json: "soundtrack" (looped, faded out), "sounds" (absolute times)
+// and scene "sfxFiles" (seconds into the scene). They are mixed with the engine's own audio track (wav).
+function soundMix(dur) {
+  const none = { inputs: [], map: [] };
+  if (!fs.existsSync(path.join(dir, 'plan.json'))) return none;
+  const plan = require('./lib/plan').readPlan(path.join(dir, 'plan.json')), sounds = require('./lib/sounds'), items = [];
+  const add = (ref, kind, at, volume) => { const f = sounds.resolve(ref, kind); if (f) items.push({ path: f.path, kind, at, volume }); else console.log('sound not found in your library, skipped: ' + ref); };
+  if (plan.soundtrack && plan.soundtrack.file) add(plan.soundtrack.file, 'music', 0, plan.soundtrack.volume != null ? +plan.soundtrack.volume : 0.3);
+  for (const x of plan.sounds || []) add(x.file, 'sfx', Math.max(0, +x.at || 0), x.volume != null ? +x.volume : 0.8);
+  let t0 = 0;
+  for (const sc of plan.scenes || []) { for (const x of sc.sfxFiles || []) add(x.file, 'sfx', t0 + Math.max(0, +x.at || 0), x.volume != null ? +x.volume : 0.8); t0 += +sc.dur || 0; }
+  if (!items.length) return none;
+  const f = ['[1:a]aresample=48000[b]'], names = ['[b]'];
+  items.forEach((it, i) => {
+    const n = i + 2, v = Math.max(0, Math.min(2, it.volume)).toFixed(2), tag = `[x${i}]`;
+    if (it.kind === 'music') f.push(`[${n}:a]aresample=48000,aloop=loop=-1:size=2147483647,atrim=0:${dur.toFixed(2)},afade=t=in:d=1,afade=t=out:st=${Math.max(0, dur - 2.5).toFixed(2)}:d=2.5,volume=${v}${tag}`);
+    else f.push(`[${n}:a]aresample=48000,volume=${v},adelay=${Math.round(it.at * 1000)}:all=1${tag}`);
+    names.push(tag);
+  });
+  f.push(`${names.join('')}amix=inputs=${names.length}:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[a]`);
+  console.log(`mixing ${items.length} library sound${items.length === 1 ? '' : 's'}`);
+  return { inputs: items.flatMap(it => ['-i', it.path]), map: ['-filter_complex', f.join(';'), '-map', '0:v', '-map', '[a]'] };
+}
+
 (async () => {
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 600000,
     args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--allow-file-access-from-files', '--autoplay-policy=no-user-gesture-required'] });
@@ -54,7 +78,8 @@ const ffmpeg = args => execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'err
       if (i % 300 === 0) console.log(`frame ${i}/${n} ${((Date.now() - t0) / 1000).toFixed(0)}s`);
     }
     // H.264 high profile + 48 kHz AAC under 25 Mbps fits YouTube, TikTok, Facebook and Instagram specs
-    ffmpeg(['-framerate', String(FPS), '-i', path.join(frames, 'f_%05d.jpg'), '-i', wav,
+    const mix = soundMix(dur);
+    ffmpeg(['-framerate', String(FPS), '-i', path.join(frames, 'f_%05d.jpg'), '-i', wav, ...mix.inputs, ...mix.map,
       '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-preset', 'medium', '-crf', '19', '-maxrate', '12M', '-bufsize', '24M',
       '-c:a', 'aac', '-ar', '48000', '-b:a', '192k', '-shortest', '-map_metadata', '-1', '-movflags', '+faststart', out]);
     fs.rmSync(frames, { recursive: true, force: true }); fs.unlinkSync(wav);

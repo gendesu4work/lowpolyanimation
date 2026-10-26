@@ -23,6 +23,10 @@ Check a plan with `node scripts/check-plan.js videos/<folder>` (instant, free), 
 
 The headline shows only on the first scene and the end card. The counter shows mid-left the whole time (after the headline), each scene tweening it to its own value.
 
+## Library sounds (optional)
+
+If the Trainer brief lists the creator's own sounds, use them instead of the built-in synth: `"soundtrack": {"file": "<music name>", "volume": 0.3}` on the whole video (loops, fades out, built-in music turns off) and `"sfxFiles": [{"file": "<sfx name>", "at": 1.5, "volume": 0.8}]` on a scene (`at` = seconds into the scene). Names must match the brief exactly; unknown names are skipped with a warning. The built-in sound effects in `sfx` still work.
+
 ## A scene
 
 ```json

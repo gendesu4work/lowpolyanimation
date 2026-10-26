@@ -23,6 +23,13 @@ if (plan.highlight && plan.title && !plan.title.toLowerCase().includes(String(pl
 if (!Array.isArray(plan.scenes) || !plan.scenes.length) errors.push('scenes must be a non-empty list');
 if (!plan.counter) warns.push('no counter: the style uses one mid-left the whole video');
 if (!plan.end || !plan.end.share) warns.push('end card has no share line');
+{ // library sounds named in the plan must exist (Soundtracks tab)
+  const sounds = require('./lib/sounds'), named = [];
+  if (plan.soundtrack && plan.soundtrack.file) named.push(['soundtrack', plan.soundtrack.file, 'music']);
+  for (const x of plan.sounds || []) named.push(['sounds', x.file, 'sfx']);
+  (plan.scenes || []).forEach((s, i) => { for (const x of s.sfxFiles || []) named.push([`scene ${i + 1} sfxFiles`, x.file, 'sfx']); });
+  for (const [where, file, kind] of named) if (!sounds.resolve(file, kind)) errors.push(`${where}: "${file}" is not in the Soundtracks library (use a name from the Trainer brief)`);
+}
 
 let total = 0; const used = new Map();
 (plan.scenes || []).forEach((s, i) => {

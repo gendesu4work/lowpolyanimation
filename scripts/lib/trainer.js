@@ -13,7 +13,7 @@ const refDir = rid => path.join(DIR, 'videos', path.basename(rid));
 
 function brief(t = load()) {
   const notes = t.notes.filter(n => n.active), refs = t.videos.filter(v => v.active && v.status === 'ready' && v.analysis);
-  const models = require('./models').brief();
+  const models = require('./models').brief() + require('./sounds').brief();
   if (!notes.length && !refs.length && !models) return '';
   let md = '# Trainer brief\n\nThe creator\'s own preferences for these animations. Follow them on every video; where they conflict with a template\'s defaults, these win. They never override the safety, accuracy and safe-zone rules.\n';
   if (notes.length) md += '\n## Things to remember\n\n' + notes.map(n => '- ' + n.text).join('\n') + '\n';

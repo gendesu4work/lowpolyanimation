@@ -9,6 +9,7 @@ const growth = require('./lib/growth');
 const comments = require('./comments');
 const cancel = require('./lib/cancel');
 const models = require('./lib/models');
+const sounds = require('./lib/sounds');
 const SUGGEST = path.join(P.root, 'data', 'suggestions.json');
 
 // A suggestion counts as installed when every distinctive word of its name appears in an installed pack's
@@ -133,6 +134,7 @@ function state() {
     claude: claudeState, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     trainer: { ...trainer.load(), brief: trainer.brief(), resultVideos: growth.results().length, minResultVideos: growth.MIN_VIDEOS },
     models: models.load().map(m => ({ ...m, thumb: fs.existsSync(path.join(models.THUMBS, m.id + '.png')) ? '/model-thumb/' + m.id + '.png' : null })),
+    sounds: sounds.load(), soundSuggestions: readJson(sounds.SUGGEST, null),
     suggestions: (s => s && { ...s, packs: s.packs.filter(p => !installedSuggestion(p.name, p.creator)) })(readJson(SUGGEST, null)),
     usage: usageSummary(),
     settings: { animationModel: claude.settings('make').model, posting: postingState() },
@@ -357,6 +359,26 @@ async function runJob(job) {
       }
       trainer.writeBrief(trainer.load());
       patchJob(job.id, { status: 'done', note: `Tagged ${tagged} models` });
+    } else if (job.kind === 'sound-download') {
+      const r = await sounds.install(job.url, { name: job.name, kind: job.soundKind, source: job.creator, license: job.license }, note => patchJob(job.id, { note }));
+      trainer.writeBrief(trainer.load());
+      patchJob(job.id, { status: 'done', note: `Added ${r.added} sound${r.added === 1 ? '' : 's'}` });
+    } else if (job.kind === 'sound-suggest') {
+      const r = claude.run(sounds.suggestPrompt(), 'suggest', ['--allowedTools', 'WebSearch,WebFetch'], { logFile, label: job.headline });
+      running.child = r.child;
+      const { out, err, result: res } = await r.done;
+      charge(job.id);
+      if (jobs.all().find(j => j.id === job.id).status === 'cancelled') return;
+      if (!res) throw new Error((out || err || 'no reply').trim().slice(0, 200));
+      if (res.is_error) throw new Error(String(res.result || 'Claude returned an error').slice(0, 200));
+      const text = String(res.result || ''), data = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+      const link = u => typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/.test(u) ? u : null;
+      const prev = readJson(sounds.SUGGEST, { sounds: [] }), at = now(), have = new Set(sounds.load().map(x => x.name.toLowerCase()));
+      const key = x => (x.url || x.name || '').toLowerCase().replace(/\/+$/, ''), known = new Set(prev.sounds.map(key));
+      const fresh = (data.sounds || []).slice(0, 16).map(x => ({ name: String(x.name || '').slice(0, 80), creator: String(x.creator || '').slice(0, 60), kind: x.kind === 'music' ? 'music' : 'sfx', license: String(x.license || '').slice(0, 90), url: link(x.url), download: link(x.download), mood: String(x.mood || '').slice(0, 60), length: String(x.length || '').slice(0, 40), why: String(x.why || '').slice(0, 240), at }))
+        .filter(x => x.name && x.url && !have.has(x.name.toLowerCase()) && !known.has(key(x)) && known.add(key(x)));
+      writeJson(sounds.SUGGEST, { at, lastAdded: fresh.length, sounds: [...fresh, ...prev.sounds] });
+      patchJob(job.id, { status: 'done', note: `Found ${fresh.length} new sounds` });
     } else if (job.kind === 'suggest') {
       const r = claude.run(suggestPrompt(), 'suggest', ['--allowedTools', 'WebSearch,WebFetch'], { logFile, label: job.headline });
       running.child = r.child;
@@ -398,7 +420,7 @@ async function runJob(job) {
 // Claude jobs wait (queued) until the command line is signed in; posting doesn't need Claude.
 function pump() {
   if (running) return;
-  const next = jobs.all().find(j => j.status === 'queued' && (j.kind === 'post' || j.kind === 'download' || claudeState.ok));
+  const next = jobs.all().find(j => j.status === 'queued' && (j.kind === 'post' || j.kind === 'download' || j.kind === 'sound-download' || claudeState.ok));
   if (next) runJob(next);
 }
 
@@ -512,6 +534,13 @@ http.createServer(async (req, res) => {
         if (!fs.existsSync(f)) return send(res, 404, 'text/plain', 'not found');
         res.writeHead(200, { 'Content-Type': 'image/png' }); return fs.createReadStream(f).pipe(res);
       }
+      if (parts[0] === 'sound-file' && parts.length === 2 && /^[a-f0-9]+$/.test(parts[1])) {
+        const sd = sounds.load().find(x => x.id === parts[1]); if (!sd || !fs.existsSync(sounds.abs(sd))) return send(res, 404, 'text/plain', 'not found');
+        const f = sounds.abs(sd), size = fs.statSync(f).size, type = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.flac': 'audio/flac', '.m4a': 'audio/mp4', '.aac': 'audio/aac' }[path.extname(f).toLowerCase()] || 'application/octet-stream';
+        const m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+        if (m) { const a = m[1] ? +m[1] : 0, b2 = m[2] ? Math.min(+m[2], size - 1) : size - 1; res.writeHead(206, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${a}-${b2}/${size}`, 'Content-Length': b2 - a + 1 }); return fs.createReadStream(f, { start: a, end: b2 }).pipe(res); }
+        res.writeHead(200, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': size }); return fs.createReadStream(f).pipe(res);
+      }
       if (parts[0] === 'trainer-media' && parts.length === 3 && ['poster.jpg', 'sheet.jpg'].includes(parts[2])) {
         const f = path.join(trainer.refDir(parts[1]), parts[2]);
         if (!fs.existsSync(f)) return send(res, 404, 'text/plain', 'not found');
@@ -525,6 +554,13 @@ http.createServer(async (req, res) => {
       const rid = await trainer.receiveVideo(req, q.get('name'), q.get('note'));
       const all = jobs.all(); all.push({ id: id(), kind: 'analyze', ref: rid, headline: 'Learn from ' + q.get('name'), status: 'queued', createdAt: now() }); jobs.save(all);
       pump(); return json(res, state());
+    }
+    // sound upload (an audio file or a zip of them)
+    if (req.method === 'PUT' && url === '/api/sounds') {
+      const q = new URL(req.url, 'http://x').searchParams;
+      const r = await sounds.receive(req, q.get('name'), { kind: q.get('kind'), source: q.get('source'), license: q.get('license') });
+      trainer.writeBrief(trainer.load());
+      return json(res, { ...state(), added: r.added });
     }
     // model pack upload (.glb/.gltf/.zip), then previews render in the background
     if (req.method === 'PUT' && url === '/api/models') {
@@ -592,6 +628,27 @@ http.createServer(async (req, res) => {
     if (url === '/api/comments/settings') { comments.setSettings(b); return json(res, state()); }
     if (url === '/api/comments/run') { await runComments(); return json(res, state()); }
     if (url === '/api/platform-mode') { setPlatformMode(b.platform, b.mode); return json(res, state()); }
+    if (url === '/api/sound-suggestions') {
+      if (jobs.all().some(j => j.kind === 'sound-suggest' && (j.status === 'queued' || j.status === 'working'))) throw new Error('Already looking for sounds');
+      const all = jobs.all(); all.push({ id: id(), kind: 'sound-suggest', headline: 'Find free music and sound effects', status: 'queued', createdAt: now() }); jobs.save(all);
+      pump(); return json(res, state());
+    }
+    if (url === '/api/sound-suggestions/download') {
+      const sg = readJson(sounds.SUGGEST, { sounds: [] }), x = sg.sounds.find(v => v.name === b.name && v.url === b.url);
+      if (!x || !x.download) throw new Error('That suggestion has no direct download');
+      if (jobs.all().some(j => j.kind === 'sound-download' && j.url === x.download && (j.status === 'queued' || j.status === 'working'))) throw new Error('Already downloading that');
+      const all = jobs.all(); all.push({ id: id(), kind: 'sound-download', url: x.download, name: x.name, soundKind: x.kind, creator: x.creator, license: x.license, headline: 'Download ' + x.name, status: 'queued', createdAt: now() }); jobs.save(all);
+      pump(); return json(res, state());
+    }
+    if (url === '/api/sound-suggestions/remove') {
+      const sg = readJson(sounds.SUGGEST, null);
+      if (sg) { sg.sounds = sg.sounds.filter(v => !(v.name === b.name && v.url === b.url)); writeJson(sounds.SUGGEST, sg); }
+      return json(res, state());
+    }
+    if (parts[1] === 'sounds' && parts[3] === 'update') { sounds.update(parts[2], b); trainer.writeBrief(trainer.load()); return json(res, state()); }
+    if (parts[1] === 'sounds' && parts[3] === 'delete') { sounds.removeSound(parts[2]); trainer.writeBrief(trainer.load()); return json(res, state()); }
+    if (parts[1] === 'sound-packs' && parts[3] === 'update') { sounds.updatePack(decodeURIComponent(parts[2]), b.active); trainer.writeBrief(trainer.load()); return json(res, state()); }
+    if (parts[1] === 'sound-packs' && parts[3] === 'delete') { sounds.removePack(decodeURIComponent(parts[2])); trainer.writeBrief(trainer.load()); return json(res, state()); }
     if (url === '/api/suggestions/download') {
       const s = readJson(SUGGEST, { packs: [] }), p = s.packs.find(x => x.url === b.url && x.name === b.name);
       if (!p || !p.url) throw new Error('That suggestion is gone');

@@ -252,6 +252,16 @@ dl.kv dd.tags { color: var(--accent); }
 .mtile .mimg img { width: 100%; height: 100%; object-fit: contain; }
 .mtile b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mtile span { font-size: 11px; color: var(--ink-3); }
+
+.ssug { display: grid; gap: 10px; padding: 16px; align-content: start; }
+.ssug .why { color: var(--ink-2); font-size: 14px; }
+.srow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 280px) auto auto; gap: 12px; align-items: center; padding: 10px 20px; border-top: 1px solid var(--line); }
+.srow.off { opacity: .55; }
+.srow .sname { min-width: 0; display: grid; gap: 2px; }
+.srow .sname b { overflow-wrap: anywhere; }
+.srow .sname span { font-size: 12px; color: var(--ink-3); }
+.srow audio { width: 100%; height: 34px; }
+@media (max-width: 720px) { .srow { grid-template-columns: 1fr auto; } .srow audio { grid-column: 1 / -1; } }
 .sugs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
 .sug { display: grid; grid-template-rows: 160px auto 1fr auto; overflow: hidden; }
 .sug .simg, .style .simg { background: var(--surface-3); display: grid; place-items: center; color: var(--ink-4); font-size: 12px; overflow: hidden; }
@@ -357,6 +367,7 @@ a { color: var(--accent); }
       <button id="nav-trainer" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M12 4c-2.5 0-4 1.6-4 3.4C6.3 7.8 5 9.2 5 11c0 1 .4 1.9 1 2.5-.6.6-1 1.5-1 2.5 0 2 1.6 3.5 3.5 3.5.6 1 1.9 1.5 3.5 1.5V4z"/><path d="M12 4c2.5 0 4 1.6 4 3.4 1.7.4 3 1.8 3 3.6 0 1-.4 1.9-1 2.5.6.6 1 1.5 1 2.5 0 2-1.6 3.5-3.5 3.5-.6 1-1.9 1.5-3.5 1.5"/></svg><span class="t">Trainer</span><span class="count" id="cnt-trainer">0</span></button>
       <button id="nav-comments" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span class="t">Comments</span></button>
       <button id="nav-models" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 22V12M21 7l-9 5-9-5"/></svg><span class="t">Models</span><span class="count" id="cnt-models">0</span></button>
+      <button id="nav-sounds" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span class="t">Soundtracks</span><span class="count" id="cnt-sounds">0</span></button>
     </nav>
     <div class="pc" id="pc"></div>
   </aside>
@@ -514,6 +525,36 @@ a { color: var(--accent); }
         <div class="styles" id="styles"></div>
       </section>
     </div>
+
+    <div class="inner" id="view-sounds" hidden>
+      <div class="pagehead">
+        <div><h1>Soundtracks</h1><p>Free music and sound effects for your animations, plus suggestions you can install in one click. Sounds switched on are listed in the Trainer brief, and Claude picks them for new videos.</p></div>
+      </div>
+
+      <section class="sec">
+        <div class="sechead"><h2>Your sounds <span class="badge" id="b-sounds">0</span></h2><span class="hint">Music loops under the whole video; effects play at a moment you choose</span></div>
+        <div class="card drop" id="sdrop">
+          <div class="dropzone" id="sdropzone" role="button" tabindex="0" aria-label="Choose a sound file or pack">
+            <svg class="i" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
+            <b>Drop an audio file (.mp3, .wav, .ogg) or a .zip pack here, or click to choose</b>
+            <span>Tracks over 45 seconds are filed as music, shorter clips as sound effects. You can change that below.</span>
+          </div>
+          <div class="pair">
+            <input class="field" id="s-source" type="text" maxlength="120" placeholder="Where it's from, e.g. Kenney Impact Sounds" aria-label="Where the sound is from">
+            <input class="field" id="s-license" type="text" maxlength="40" placeholder="License, e.g. CC0" aria-label="License">
+          </div>
+          <input id="s-file" type="file" accept="audio/*,.zip" hidden>
+          <div class="genstatus" id="s-upstatus"></div>
+        </div>
+        <div class="packs" id="spacks"></div>
+      </section>
+
+      <section class="sec">
+        <div class="sechead"><h2>Suggested sounds <span class="badge" id="b-ssugs">0</span></h2><button class="btn" id="sfind" type="button"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg>Find suggestions</button></div>
+        <div class="genstatus" id="sfind-status"></div>
+        <div class="sugs" id="ssugs"></div>
+      </section>
+    </div>
   </main>
 </div>
 <div id="tip" hidden></div>
@@ -538,6 +579,7 @@ const ICON = {
   note: '<path d="M5 4h14v16H5z"/><path d="M9 9h6M9 13h6M9 17h3"/>',
   cube: '<path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 22V12M21 7l-9 5-9-5"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/>',
+  note: '<path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
   ext: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/>',
 };
 const $ = id => document.getElementById(id);
@@ -556,7 +598,7 @@ const hideTip = () => { tip.hidden = true; };
 const state = { ideas: [], jobs: [], videos: [], accounts: null, claude: null };
 
 // navigation (remembered per viewer)
-const VIEWS = ["create", "dash", "trainer", "comments", "models"];
+const VIEWS = ["create", "dash", "trainer", "comments", "models", "sounds"];
 function setView(v) {
   for (const x of VIEWS) { const b = $("nav-" + x); if (x === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); $("view-" + x).hidden = x !== v; }
   try { localStorage.setItem("view", v); } catch {}
@@ -670,7 +712,7 @@ function renderIdeas() {
   }));
 }
 
-const KIND = { make: ["make", "Animate"], revise: ["revise", "Revise"], post: ["post", "Post"], discard: ["x", "Discard"], analyze: ["learn", "Learn"], suggest: ["search", "Suggest"], tag: ["cube", "Catalog"], download: ["cube", "Download"] };
+const KIND = { make: ["make", "Animate"], revise: ["revise", "Revise"], post: ["post", "Post"], discard: ["x", "Discard"], analyze: ["learn", "Learn"], suggest: ["search", "Suggest"], tag: ["cube", "Catalog"], download: ["cube", "Download"], "sound-suggest": ["search", "Suggest"], "sound-download": ["cube", "Download"] };
 function renderJobs() {
   const box = $("jobs"), list = activeJobs();
   if (!list.length) { box.replaceChildren(empty("film", "Nothing in progress", "Pick an idea or approve a video and it shows up here.")); return; }
@@ -1028,11 +1070,82 @@ for (const ev of ["dragleave", "drop"]) $("mdrop").addEventListener(ev, e => { e
 $("mdrop").addEventListener("drop", e => uploadModel(e.dataTransfer.files[0]));
 $("suggest").onclick = () => post("/api/suggestions");
 
+// ---------- Soundtracks ----------
+let openSoundPacks = new Set(); try { openSoundPacks = new Set(JSON.parse(localStorage.getItem("openSoundPacks") || "[]")); } catch {}
+const dur = n => n >= 60 ? Math.floor(n / 60) + ":" + String(Math.round(n % 60)).padStart(2, "0") : Math.round(n) + " s";
+function renderSounds() {
+  const list = state.sounds || [], sug = state.soundSuggestions;
+  $("b-sounds").textContent = list.length; $("cnt-sounds").textContent = list.filter(x => x.active).length;
+  const packs = {};
+  for (const x of list) (packs[x.pack] = packs[x.pack] || []).push(x);
+  const newest = xs => xs.reduce((a, x) => (x.addedAt || "") > a ? x.addedAt : a, "");
+  $("spacks").replaceChildren(...(Object.keys(packs).length ? Object.entries(packs).sort((a, b) => newest(b[1]).localeCompare(newest(a[1]))).map(([pack, xs]) => {
+    const open = openSoundPacks.has(pack), on = xs.filter(x => x.active).length, first = xs[0];
+    const music = xs.filter(x => x.kind === "music").length;
+    return el("article", { class: "card pack" },
+      el("div", { class: "phead" },
+        el("button", { class: "pname", type: "button", "aria-expanded": String(open), onclick: () => { open ? openSoundPacks.delete(pack) : openSoundPacks.add(pack); try { localStorage.setItem("openSoundPacks", JSON.stringify([...openSoundPacks])); } catch {} renderSounds(); } },
+          el("b", {}, el("span", { class: "chev", text: open ? "▾" : "▸" }), " " + pack.replace(/-/g, " ")), el("span", { text: [xs.length + (xs.length === 1 ? " sound" : " sounds"), music ? music + " music" : null, first.license || null, first.source || null].filter(Boolean).join(" · ") })),
+        el("div", { class: "pactions" },
+          el("label", { class: "switch" }, el("input", { type: "checkbox", ...(on ? { checked: "" } : {}), onchange: e => post("/api/sound-packs/" + encodeURIComponent(pack) + "/update", { active: e.target.checked }) }), on === xs.length ? "Use this pack" : on ? on + " of " + xs.length + " on" : "Use this pack"),
+          twoStep("Delete pack", "Confirm", () => post("/api/sound-packs/" + encodeURIComponent(pack) + "/delete")))),
+      open ? el("div", {}, xs.map(x => el("div", { class: "srow" + (x.active ? "" : " off") },
+        el("div", { class: "sname" }, el("b", { text: x.name }), el("span", { text: dur(x.durationSec) })),
+        el("audio", { controls: "", preload: "none", src: "/sound-file/" + x.id }),
+        el("select", { class: "field", "aria-label": "Kind", onchange: e => post("/api/sounds/" + x.id + "/update", { kind: e.target.value }) }, el("option", { value: "music", ...(x.kind === "music" ? { selected: "" } : {}) }, "Music"), el("option", { value: "sfx", ...(x.kind === "sfx" ? { selected: "" } : {}) }, "Sound effect")),
+        el("div", { class: "row" }, el("label", { class: "switch", title: x.active ? "On" : "Off" }, el("input", { type: "checkbox", "aria-label": "Use this sound", ...(x.active ? { checked: "" } : {}), onchange: e => post("/api/sounds/" + x.id + "/update", { active: e.target.checked }) })),
+          el("button", { class: "btn quiet sm", type: "button", "aria-label": "Delete sound", title: "Delete", onclick: () => post("/api/sounds/" + x.id + "/delete") }, icon("x")))))) : "");
+  }) : [el("div", { class: "card" }, empty("note", "No sounds yet", "Find suggestions below to install some in one click, or drop your own files above."))]));
+
+  const busy = state.jobs.find(j => j.kind === "sound-suggest" && (j.status === "queued" || j.status === "working"));
+  const items = sug && sug.sounds ? sug.sounds : [];
+  $("sfind").disabled = !!busy;
+  $("sfind").lastChild.textContent = items.length ? "Find more" : "Find suggestions";
+  $("b-ssugs").textContent = items.length;
+  $("sfind-status").replaceChildren(...(busy ? [el("span", { class: "spin" }), el("span", { text: "Claude is checking Kenney, OpenGameArt, Pixabay, Mixkit and more. This takes a few minutes." })]
+    : sug ? [el("span", { text: "Last search " + ago(sug.at) + (sug.lastAdded != null ? " added " + sug.lastAdded + " new" : "") + ". Check each license before posting; CC-BY needs credit in your description." })] : []));
+  $("ssugs").replaceChildren(...(items.length ? items.map(x => el("article", { class: "card ssug" },
+    el("div", { class: "row" }, el("b", { text: x.name }), el("button", { class: "btn quiet sm", type: "button", "aria-label": "Remove suggestion", title: "Not interested", onclick: () => post("/api/sound-suggestions/remove", { url: x.url, name: x.name }) }, icon("x"))),
+    el("div", { class: "chips" }, x.at && x.at === sug.at ? el("span", { class: "chip2 new", text: "New" }) : "", el("span", { class: "chip2", text: x.kind === "music" ? "Music" : "Sound effects" }), el("span", { class: "chip2" + (/cc0/i.test(x.license) ? " cc0" : ""), text: x.license || "License?" }), x.creator ? el("span", { class: "chip2", text: x.creator }) : "", x.mood ? el("span", { class: "chip2", text: x.mood }) : "", x.length ? el("span", { class: "chip2", text: x.length }) : ""),
+    el("div", { class: "why", text: x.why }),
+    soundButtons(x))) : [el("div", { class: "card", style: "grid-column:1/-1" }, empty("search", "No suggestions yet", "Click Find suggestions and Claude will look for free music and effects that fit your videos."))]));
+}
+function soundButtons(x) {
+  const page = el("a", { class: "btn sm quiet", href: x.url, target: "_blank", rel: "noopener noreferrer" }, icon("ext"), "Open page");
+  if (!x.download) return el("div", { class: "row" }, page, el("span", { class: "usage", text: "Download it there, then drop the file above." }));
+  const job = state.jobs.find(j => j.kind === "sound-download" && j.url === x.download && (j.status === "queued" || j.status === "working" || j.status === "failed"));
+  if (job && job.status !== "failed") return el("div", { class: "row" }, el("span", { class: "pill working", text: job.status === "queued" ? "Waiting to download" : (job.note || "Downloading") }), page);
+  return el("div", { class: "row" }, el("button", { class: "btn sm primary", type: "button", onclick: e => { e.currentTarget.disabled = true; post("/api/sound-suggestions/download", { url: x.url, name: x.name }); } }, icon("cube"), job ? "Try again" : "Install"), page,
+    job && job.status === "failed" ? el("div", { class: "err", style: "flex-basis:100%", text: job.note }) : "");
+}
+function sStatus(text, pct) { $("s-upstatus").replaceChildren(...(text ? [pct != null ? el("div", { class: "progress" }, el("div", { style: "width:" + pct + "%" })) : "", el("span", { text })] : [])); }
+function uploadSound(file) {
+  if (!file) return;
+  if (!/\.(mp3|wav|ogg|flac|m4a|aac|opus|zip)$/i.test(file.name)) { sStatus("Use an audio file (.mp3, .wav, .ogg) or a .zip."); return; }
+  const x = new XMLHttpRequest();
+  x.open("PUT", "/api/sounds?name=" + encodeURIComponent(file.name) + "&source=" + encodeURIComponent($("s-source").value.trim()) + "&license=" + encodeURIComponent($("s-license").value.trim()));
+  x.upload.onprogress = e => e.lengthComputable && sStatus("Adding " + file.name + "…", Math.round(e.loaded / e.total * 100));
+  x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch {}
+    if (d.error) { sStatus(d.error); return; }
+    $("s-source").value = ""; $("s-license").value = ""; sStatus("Added " + d.added + (d.added === 1 ? " sound." : " sounds.")); apply(d); };
+  x.onerror = () => sStatus("Upload failed. Is the app still running?");
+  x.send(file);
+}
+const sdz = $("sdropzone"), spick = $("s-file");
+sdz.onclick = () => spick.click();
+sdz.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); spick.click(); } };
+spick.onchange = () => { uploadSound(spick.files[0]); spick.value = ""; };
+for (const ev of ["dragenter", "dragover"]) $("sdrop").addEventListener(ev, e => { e.preventDefault(); sdz.classList.add("over"); });
+for (const ev of ["dragleave", "drop"]) $("sdrop").addEventListener(ev, e => { e.preventDefault(); sdz.classList.remove("over"); });
+$("sdrop").addEventListener("drop", e => uploadSound(e.dataTransfer.files[0]));
+$("sfind").onclick = () => post("/api/sound-suggestions");
+
 // ---------- data ----------
 function apply(d) {
   state.ideas = d.ideas; state.jobs = d.jobs.slice().reverse(); state.videos = d.videos; state.accounts = d.accounts; state.claude = d.claude; state.trainer = d.trainer;
   const tKey = JSON.stringify(d.trainer); if (tKey !== apply.tKey) { apply.tKey = tKey; renderTrainer(); }
-  state.models = d.models; state.suggestions = d.suggestions;
+  state.models = d.models; state.suggestions = d.suggestions; state.sounds = d.sounds; state.soundSuggestions = d.soundSuggestions;
+  const sKey = JSON.stringify([d.sounds, d.soundSuggestions, state.jobs.filter(j => j.kind === "sound-suggest" || j.kind === "sound-download").map(j => [j.status, j.note])]); if (sKey !== apply.sKey) { apply.sKey = sKey; renderSounds(); }
   const mKey = JSON.stringify([d.models, d.suggestions, state.jobs.filter(j => j.kind === "suggest" || j.kind === "download").map(j => [j.status, j.note])]); if (mKey !== apply.mKey) { apply.mKey = mKey; renderModels(); }
   // redraw the status card only when it changes, so a half-clicked Quit isn't reset by the next poll
   state.usage = d.usage; state.settings = d.settings;

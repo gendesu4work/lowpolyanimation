@@ -10,6 +10,7 @@ const SCRIPTS = ['build/three.min.js', 'examples/js/loaders/GLTFLoader.js', 'exa
 
 function buildPage(dir) {
   const plan = require('./lib/plan').readPlan(path.join(dir, 'plan.json'));
+  if (plan.soundtrack && plan.soundtrack.file) plan.music = false; // the chosen music file replaces the built-in synth music (render.js mixes it in)
   const lib = readJson(path.join(__dirname, '..', 'engine', 'library.json'), []);
   const custom = fs.existsSync(path.join(dir, 'custom.js')) ? fs.readFileSync(path.join(dir, 'custom.js'), 'utf8') : '';
   const safe = v => JSON.stringify(v).replace(/</g, '\\u003c'); // plan text can't close the script tag
