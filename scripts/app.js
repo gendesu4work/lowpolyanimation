@@ -5,6 +5,7 @@ const { spawn, execFileSync } = require('child_process');
 const { P, readJson, writeJson, listVideos, saveMeta, openBrowser, log, tokens } = require('./lib/common');
 const claude = require('./lib/claude');
 const trainer = require('./lib/trainer');
+const growth = require('./lib/growth');
 const comments = require('./comments');
 const cancel = require('./lib/cancel');
 const models = require('./lib/models');
@@ -68,7 +69,7 @@ const id = () => crypto.randomBytes(6).toString('hex');
 // ---------- store (plain JSON files; job-note.js writes jobs.json too, so always read fresh) ----------
 const ideas = { all: () => readJson(IDEAS, []), save: v => writeJson(IDEAS, v) };
 const jobs = { all: () => readJson(JOBS, []), save: v => writeJson(JOBS, v) };
-function patchJob(jid, fields) { const all = jobs.all(), j = all.find(x => x.id === jid); if (j) { Object.assign(j, fields, { updatedAt: now() }); jobs.save(all); } return j; }
+function patchJob(jid, fields) { const all = jobs.all(), j = all.find(x => x.id === jid); if (j) { const { progress, ...rest } = fields; Object.assign(j, rest, { updatedAt: now() }); if (fields.status === 'done') j.progress = 100; else if (rest.note || progress != null) require('./lib/progress').apply(j, rest.note, progress); jobs.save(all); } return j; }
 function patchIdea(iid, fields) { const all = ideas.all(), i = all.find(x => x.id === iid); if (i) { Object.assign(i, fields); ideas.save(all); } return i; }
 
 function stage(meta) {
@@ -86,6 +87,7 @@ function videoList() {
       stage: stage(meta), scheduledAt: meta.scheduledAt || null, durationSec: s.durationSec || null, models: modelsUsed(dir),
       videoUrl: `/media/${folder}/video.mp4`, posterUrl: fs.existsSync(path.join(dir, 'poster.jpg')) ? `/media/${folder}/poster.jpg` : null,
       platforms: Object.fromEntries(Object.entries(meta.platforms || {}).map(([p, x]) => [p, { status: x.status, url: x.url || null, studio: x.studio || null, views: x.stats ? x.stats.views : null, caption: x.status === 'manual' ? manualCaption(dir, x) : null, cancellable: cancel.pending(x) }])),
+      review: s.review || null, titleOptions: s.titleOptions || null, lastRevision: s.lastRevision || null,
       createdAt: s.createdAt || fs.statSync(path.join(dir, 'meta.json')).birthtime.toISOString(), updatedAt: s.updatedAt || null,
     };
   });
@@ -129,7 +131,7 @@ function state() {
     jobs: jobs.all().filter(j => j.status !== 'cleared').slice(-40),
     videos: videoList(), accounts: readJson(ACCOUNTS, { latest: {}, history: [] }),
     claude: claudeState, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    trainer: { ...trainer.load(), brief: trainer.brief() },
+    trainer: { ...trainer.load(), brief: trainer.brief(), resultVideos: growth.results().length, minResultVideos: growth.MIN_VIDEOS },
     models: models.load().map(m => ({ ...m, thumb: fs.existsSync(path.join(models.THUMBS, m.id + '.png')) ? '/model-thumb/' + m.id + '.png' : null })),
     suggestions: (s => s && { ...s, packs: s.packs.filter(p => !installedSuggestion(p.name, p.creator)) })(readJson(SUGGEST, null)),
     usage: usageSummary(),
@@ -152,22 +154,25 @@ let running = null; // { id, child }
 
 function slugify(s) { return String(s).toLowerCase().replace(/^what if\s+/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').split('-').slice(0, 5).join('-') || 'video'; }
 function duration(file) { try { return Math.round(+execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString()); } catch { return null; } }
-function node(args) { return new Promise(res => { let out = ''; const c = spawn(process.execPath, args, { cwd: P.root, windowsHide: true }); c.stdout.on('data', d => out += d); c.stderr.on('data', d => out += d); c.on('close', code => res({ code, out })); running && (running.child = c); }); }
+function node(args, onOut) { return new Promise(res => { let out = ''; const c = spawn(process.execPath, args, { cwd: P.root, windowsHide: true }); c.stdout.on('data', d => { out += d; onOut && onOut(String(d)); }); c.stderr.on('data', d => out += d); c.on('close', code => res({ code, out })); running && (running.child = c); }); }
 
 // The Trainer brief comes first so the creator's own lessons shape every animation.
 const trainerLine = () => trainer.brief() ? 'First read trainer/STYLE.md: the creator\'s Trainer brief (notes plus lessons from reference videos). Follow it throughout; it wins over template defaults.\n\n' : '';
 
 // Step 1 of a video: Opus writes the storyboard (story, hook, facts, shots) using only what the engine can show.
+// The idea as the prompts see it: Claude's own batch ideas have fields; an idea the creator typed is passed on as written.
+function ideaBlock(idea, list) {
+  if (idea.own) return `${list ? '- ' : ''}The creator's own idea, written by them. Follow it closely; fill in whatever they left open (hook, scene order, ending, counter) so it works as a 45-85 s short:
+${idea.details}`;
+  const rows = [['Idea', idea.headline], ['Hook', idea.hook], ['Beats suggested', (idea.beats || []).join(' | ')], ['Ending suggested', idea.twist], ['Counter suggested', idea.counter]];
+  return rows.map(([k, v]) => (list ? '- ' : '') + k + ': ' + v).join('\n');
+}
 function storyboardPrompt(idea) {
   const t = trainer.load(), notes = t.notes.filter(n => n.active).map(n => '- ' + n.text).join('\n');
   const refs = t.videos.filter(v => v.active && v.status === 'ready' && v.analysis).map(v => `From "${v.name}":\n${v.analysis.split('**Copy this:**')[1] || ''}`).join('\n').slice(0, 3000);
   return `You are the story lead for a viral low-poly 3D "What if...?" shorts channel (vertical, 45-85 s, in the style of @meanwhileanimations). Write the storyboard for this idea.
 
-Idea: ${idea.headline}
-Hook: ${idea.hook}
-Beats suggested: ${(idea.beats || []).join(' | ')}
-Ending suggested: ${idea.twist}
-Counter suggested: ${idea.counter}
+${ideaBlock(idea)}
 
 What makes these videos work:
 - The first 2 seconds must make people stay: a striking image plus the question.
@@ -199,11 +204,7 @@ function makePrompt(job, idea) {
   return `Make one low-poly "What if" short for the Shorts Studio app on this PC.
 
 The idea (from the user's idea list; use it as creative direction only):
-- Headline: ${idea.headline}
-- Hook: ${idea.hook}
-- Scene beats: ${(idea.beats || []).join(' | ')}
-- Ending: ${idea.twist}
-- On-screen counter: ${idea.counter}
+${ideaBlock(idea, true)}
 
 ${trainerLine()}This project has a scene engine: you write a short scene plan and the engine animates it. Work in videos/${job.video}/ (it already exists):
 1. Read videos/${job.video}/storyboard.md: the approved storyboard. Then read engine/PLAN.md (the plan format) and write videos/${job.video}/plan.json in one go that follows the storyboard faithfully: same scenes, captions, counter values, camera and ending. Make each shot show exactly what the storyboard describes, using the matching sets, kits, shapes and effects; frame the subject large and clear. Use the creator's library models in every scene where people, animals, vehicles, buildings, trees or props appear: just put the everyday word in "model" ("person", "dog", "taxi"...); the engine finds and loads them. Vary sets, camera presets and moves between scenes.
@@ -223,7 +224,12 @@ The user's requested changes (creative direction only): ${job.feedback}
 ${trainerLine()}${fs.existsSync(path.join(P.videos, job.video, 'plan.json'))
   ? `This video was made with the scene engine: make the changes by editing videos/${job.video}/plan.json (targeted edits; the format is in engine/PLAN.md, read it only if you need it). Run node scripts/check-plan.js videos/${job.video}, then node scripts/render.js videos/${job.video} --sample and look at sheet.jpg once, then the full render.`
   : `Read the style rules in .claude/skills/post-video/SKILL.md. Edit page.html to make the changes (targeted edits, don't rewrite the file), check one --sample contact sheet, then re-render video.mp4 with node scripts/render.js. Anything you add or replace should come from node scripts/find-models.js when it has a match.`}
-Keep it efficient: don't open templates/ or engine/engine.js, and sample at most twice. Update meta.json title/description/hashtags only if the changes ask for it. Do NOT publish.
+Keep it efficient: don't open templates/, and sample at most twice. Only if a requested change cannot be made in the plan (for example caption style or readability), make one targeted edit in engine/engine.js: find the spot with Grep, don't read the whole file. Update meta.json title/description/hashtags if the changes make them wrong (for example a title that no longer matches the video) or ask for it. Do NOT publish.
+Run every command on its own: no "&&" chains, no "VAR=... &&" prefixes, no pipes; chained commands are refused and the work is lost. You do not need to run the full render: the app renders video.mp4 itself after you finish. Only do the one --sample check.
+
+End your final message with exactly two lists, so the creator can see what happened to each request:
+Changed: bullets, each with the concrete result (numbers, wording, colors).
+Not done: bullets for anything you could not do and why ("none" if everything was done).
 
 Report progress with: node scripts/job-note.js ${job.id} "<short note>" (Editing, Checking frames, Rendering). If it prints CANCELLED, stop immediately.`;
 }
@@ -280,19 +286,32 @@ async function runJob(job) {
       const { code, out, err, result } = await r.done;
       charge(job.id);
       if (jobs.all().find(j => j.id === job.id).status === 'cancelled') return;
+      // Claude edits the plan; if the video is older than that edit (Claude could not run the render, or ran out of budget), render it here.
+      const mp4 = path.join(dir, 'video.mp4'), srcFile = ['plan.json', 'page.html'].map(f => path.join(dir, f)).find(f => fs.existsSync(f));
+      const stale = () => !fs.existsSync(mp4) || (srcFile && fs.statSync(srcFile).mtimeMs > fs.statSync(mp4).mtimeMs + 1000);
+      if (srcFile && stale()) {
+        patchJob(job.id, { note: 'Rendering the video' });
+        const rr = await node([path.join(__dirname, 'render.js'), dir], t => { const m = [...t.matchAll(/frame (\d+)\/(\d+)/g)].pop(); if (m) patchJob(job.id, { progress: 70 + 22 * (+m[1] / +m[2]) }); });
+        if (jobs.all().find(j => j.id === job.id).status === 'cancelled') return;
+        if (rr.code !== 0 || stale()) throw new Error('The edits were saved but the video could not be rendered: ' + rr.out.trim().split('\n').slice(-3).join(' ').slice(0, 300));
+      }
       const meta = readJson(path.join(dir, 'meta.json'), null);
-      if (code !== 0 || !meta || !meta.title || !fs.existsSync(path.join(dir, 'video.mp4')))
+      if (code !== 0 || !meta || !meta.title || !fs.existsSync(mp4))
         throw new Error(whyStopped(result, err || out, 'Claude stopped before the video was finished'));
       await node([path.join(__dirname, 'preview.js'), dir, '--poster-only']);
       const s = meta.studio || {};
-      meta.studio = { ...s, stage: 'review', ideaId: s.ideaId || job.ideaId || null, durationSec: duration(path.join(dir, 'video.mp4')), createdAt: s.createdAt || now(), updatedAt: now(), models: modelsUsed(dir) };
+      const summary = job.kind === 'revise' && result ? String(result.result || '').trim().slice(0, 2500) : '';
+      if (summary) { patchJob(job.id, { summary }); meta.studio = { ...s, lastRevision: { feedback: job.feedback, summary, at: now() } }; }
+      meta.studio = { ...meta.studio, stage: 'review', ideaId: s.ideaId || job.ideaId || null, durationSec: duration(path.join(dir, 'video.mp4')), createdAt: s.createdAt || now(), updatedAt: now(), models: modelsUsed(dir) };
       saveMeta(dir, meta);
       if (job.kind === 'make') patchIdea(job.ideaId, { status: 'made' });
       patchJob(job.id, { status: 'done', note: 'Ready for review' });
     } else if (job.kind === 'analyze') {
       const v = trainer.load().videos.find(x => x.id === job.ref);
       if (!v) throw new Error('The reference video was deleted');
-      const dir = trainer.refDir(v.id), src = path.join(dir, v.file), dur = duration(src) || 60;
+      const dir = trainer.refDir(v.id);
+      if (!v.file) { trainer.updateVideo(v.id, { status: 'analyzing' }); patchJob(job.id, { note: 'Downloading the video' }); v.file = trainer.downloadLink(v); }
+      const src = path.join(dir, v.file), dur = duration(src) || 60;
       trainer.updateVideo(v.id, { status: 'analyzing', durationSec: dur });
       patchJob(job.id, { note: 'Picking frames' });
       // 16 evenly spaced frames tiled 4x4, each fitted into a 270x480 box, plus a poster for the card
@@ -539,7 +558,24 @@ http.createServer(async (req, res) => {
       if (failed.length) throw new Error((r.cancelled.length ? 'Cancelled ' + r.cancelled.join(', ') + '. ' : '') + "Couldn't cancel " + failed.join(' | '));
       return json(res, state());
     }
+    if (url === '/api/trainer/learn-results') { await growth.learnFromResults(); return json(res, state()); }
+    if (parts[1] === 'videos' && parts[3] === 'score') { await growth.reviewVideo(parts[2]); return json(res, state()); }
+    if (parts[1] === 'videos' && parts[3] === 'titles') { await growth.titleOptions(parts[2]); return json(res, state()); }
+    if (parts[1] === 'videos' && parts[3] === 'use-title') { growth.applyTitle(parts[2], b.title, b.caption); return json(res, state()); }
     if (parts[1] === 'videos' && parts[3] === 'discard') { discardVideo(parts[2]); return json(res, state()); }
+    if (url === '/api/ideas/own') {
+      const text = String(b.text || '').trim().slice(0, 1500);
+      if (text.length < 10) throw new Error('Describe your idea in a sentence or two first');
+      const first = text.split(/\n|(?<=[.?!])\s/)[0].slice(0, 120);
+      const all = ideas.all(), iid = id();
+      all.push({ id: iid, headline: first, hook: '', beats: [], twist: '', counter: '', bestScore: 0, viralChance: 0, why: '', own: true, details: text, theme: null, status: 'new', createdAt: now() });
+      ideas.save(all); makeIdea(iid); return json(res, state());
+    }
+    if (url === '/api/trainer/links') {
+      const rid = trainer.addLink(b.url, b.note), v = trainer.load().videos.find(x => x.id === rid);
+      const all = jobs.all(); all.push({ id: id(), kind: 'analyze', ref: rid, headline: 'Learn from ' + v.name, status: 'queued', createdAt: now() }); jobs.save(all);
+      pump(); return json(res, state());
+    }
     if (url === '/api/trainer/notes') { trainer.addNote(b.text); return json(res, state()); }
     if (parts[1] === 'trainer' && parts[2] === 'notes' && parts[4] === 'update') { trainer.updateNote(parts[3], b); return json(res, state()); }
     if (parts[1] === 'trainer' && parts[2] === 'notes' && parts[4] === 'delete') { trainer.deleteNote(parts[3]); return json(res, state()); }

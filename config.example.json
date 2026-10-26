@@ -17,7 +17,7 @@
   "postsPerDay": 1,
   "minHoursBetweenPosts": 20,
   "explore": 0.25,
-  "aiDisclosure": true,
+  "aiDisclosure": false,
   "platforms": {
     "youtube": {
       "mode": "own",

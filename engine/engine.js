@@ -359,6 +359,7 @@
     g2.save(); g2.globalAlpha = o.alpha == null ? 1 : o.alpha; g2.font = font; g2.fillStyle = color; g2.textAlign = o.align || 'left'; g2.textBaseline = 'middle';
     if ('letterSpacing' in g2) g2.letterSpacing = (o.ls || 0) + 'px';
     if (o.shadow !== false) { g2.shadowColor = 'rgba(0,0,0,.55)'; g2.shadowBlur = 14; g2.shadowOffsetY = 3; }
+    // no dark outline: the creator wants plain white text with just the soft shadow above
     g2.fillText(str, x, y); g2.restore();
   }
   function wrap(str, font, maxW) {
@@ -522,15 +523,15 @@
       const cAlpha = sc === scenes[0] ? smooth((lt - (+plan.titleHold || 2.8) - 0.2) / 0.4) : 1;
       if (plan.counter && !inEnd && cAlpha > 0.01) {
         g2.globalAlpha = cAlpha; const v = sc.cFrom + (sc.cTo - sc.cFrom) * EASE.out(lt / (+(sc.counter && sc.counter.over) || 1.6)), x = W * 0.08, y = H * 0.465;
-        text(String(plan.counter.label || '').toUpperCase(), x, y, `600 24px ${MONO}`, '#f3f4f6', { ls: 4, alpha: 0.95 * cAlpha });
-        text(sc.counter && sc.counter.text ? sc.counter.text : fmt(v, plan.counter), x - 4, y + 72, `400 108px ${SERIF}`, '#ffffff', { alpha: cAlpha });
-        if (sc.counter && sc.counter.sub) text(String(sc.counter.sub).toUpperCase(), x, y + 146, `500 24px ${MONO}`, '#f3f4f6', { ls: 3, alpha: 0.9 * cAlpha });
+        text(String(plan.counter.label || '').toUpperCase(), x, y, `600 24px ${MONO}`, '#f3f4f6', { ls: 4, alpha: 0.95 * cAlpha, outline: 6 });
+        text(sc.counter && sc.counter.text ? sc.counter.text : fmt(v, plan.counter), x - 4, y + 72, `400 108px ${SERIF}`, '#ffffff', { alpha: cAlpha, outline: 12 });
+        if (sc.counter && sc.counter.sub) text(String(sc.counter.sub).toUpperCase(), x, y + 146, `500 24px ${MONO}`, '#f3f4f6', { ls: 3, alpha: 0.9 * cAlpha, outline: 6 });
         g2.globalAlpha = 1;
       }
       // caption: one italic line per scene, around 63% height, never wider than 70% of the frame
       if (sc.caption && !inEnd) {
         const a = smooth((lt - 0.35) / 0.4) * (1 - smooth((lt - sc.dur + 0.35) / 0.3)), font = `italic 400 52px ${SERIF}`, lines = wrap(sc.caption, font, W * 0.7).slice(0, 2);
-        lines.forEach((ln, i) => text(ln, W / 2, H * 0.635 + (i - (lines.length - 1) / 2) * 64, font, '#ffffff', { align: 'center', alpha: a }));
+        lines.forEach((ln, i) => text(ln, W / 2, H * 0.635 + (i - (lines.length - 1) / 2) * 64, font, '#ffffff', { align: 'center', alpha: a, outline: 10 }));
       }
       // flash at a scene's start, and a quick dip to black between scenes
       if (sc.fx.flash) { const a = 1 - smooth((lt - (+sc.fx.flash.at || 0)) / 0.45); if (a > 0 && lt >= (+sc.fx.flash.at || 0)) { g2.globalAlpha = a; g2.fillStyle = sc.fx.flash.color || '#ffffff'; g2.fillRect(0, 0, W, H); g2.globalAlpha = 1; } }
@@ -538,7 +539,7 @@
       // end card
       if (inEnd && plan.end !== false) {
         const e = plan.end || {}, et = time - last.t1, a = smooth(et / 0.6);
-        g2.globalAlpha = a * 0.86; g2.fillStyle = '#07090e'; g2.fillRect(0, 0, W, H); g2.globalAlpha = 1;
+        g2.globalAlpha = a * (e.dim != null ? +e.dim : 0.86); // e.dim: how dark the end card is (0-1) g2.fillStyle = '#07090e'; g2.fillRect(0, 0, W, H); g2.globalAlpha = 1;
         headline(plan, H * 0.36, 72, a);
         (e.lines || []).slice(0, 2).forEach((ln, i) => text(String(ln).toUpperCase(), W / 2, H * 0.47 + i * 44, `500 26px ${MONO}`, '#d7dbe3', { align: 'center', ls: 3, alpha: smooth((et - 0.4) / 0.5), shadow: false }));
         if (e.share) { const sa = smooth((et - 0.9) / 0.5); text('↗', W / 2, H * 0.575, `400 54px ${SERIF}`, plan.accent || '#ff6a5c', { align: 'center', alpha: sa, shadow: false }); wrap(String(e.share).toUpperCase(), `600 26px ${MONO}`, W * 0.7).forEach((ln, i) => text(ln, W / 2, H * 0.62 + i * 40, `600 26px ${MONO}`, plan.accent || '#ff6a5c', { align: 'center', ls: 3, alpha: sa, shadow: false })); }

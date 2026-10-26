@@ -138,6 +138,6 @@ Activity and errors are logged to `data/activity.log`. A failed upload is retrie
 ## Limits to know
 
 - Videos must be **45–90 seconds**; Facebook Reels rejects anything over 90 s.
-- AI disclosure is on (`"aiDisclosure": true`), so platforms label posts as AI-generated. That's honest and avoids penalties.
+- AI disclosure is off (`"aiDisclosure": false`) because the videos are clearly stylized low-poly animation, which the platforms don't require labeling. Renders also strip file metadata. If you ever add realistic content (lifelike people, cloned voices, real events), set it back to `true`.
 - `config.json`, the `secrets` folder, your videos and your data stay on your PC and are never committed.
 - Meta occasionally renames insight metrics. If `npm run stats` warns about Facebook or Instagram, posting still works; only the view counts for that platform are missing.

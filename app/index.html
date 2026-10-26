@@ -198,7 +198,9 @@ dl.kv dd.tags { color: var(--accent); }
 .dropzone span { font-size: 12px; line-height: 16px; }
 .dropzone:hover, .dropzone.over { border-color: var(--accent); background: var(--accent-soft); }
 .progress { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; flex: 1; }
-.progress div { height: 100%; background: var(--accent); }
+.progress div { height: 100%; background: var(--accent); transition: width .6s ease; }
+.jobmeter { display: flex; align-items: center; gap: 10px; margin-top: 6px; max-width: 360px; }
+.jobmeter .mono { font-size: 12px; color: var(--text-2, inherit); white-space: nowrap; }
 .refs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
 .ref { overflow: hidden; }
 .ref .thumb { height: 180px; background: #0b0d12; display: grid; place-items: center; color: #8a92a3; font-size: 12px; }
@@ -374,6 +376,10 @@ a { color: var(--accent); }
           <button class="btn primary" id="gen" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5l-1.9-4.6L5.5 9l4.6-1.4z"/></svg>Generate ideas</button>
           <div class="genstatus" id="gen-status"></div>
         </div>
+        <form class="card gen own" id="own-form">
+          <textarea class="field" id="own-text" rows="3" maxlength="1500" placeholder="Your own idea: e.g. What if the Moon disappeared for a day? Add anything you want: the hook, the scenes, the ending, what the counter tracks." aria-label="Your own idea"></textarea>
+          <button class="btn primary" id="own-go" type="submit">Make my idea</button>
+        </form>
         <div class="ideas" id="ideas"></div>
       </section>
 
@@ -423,6 +429,10 @@ a { color: var(--accent); }
 
       <section class="sec">
         <div class="sechead"><h2>Reference videos <span class="badge" id="b-refs">0</span></h2><span class="hint">Claude studies 16 frames from each video. It can't hear the audio.</span></div>
+        <form class="noteform" id="link-form">
+          <input class="field" id="ref-link" type="url" placeholder="Paste a link to a competitor's short (YouTube, TikTok, Instagram, Facebook)" aria-label="Link to a reference video">
+          <button class="btn primary" type="submit">Learn from link</button>
+        </form>
         <div class="card drop" id="drop">
           <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Choose a reference video">
             <svg class="i" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
@@ -434,6 +444,12 @@ a { color: var(--accent); }
           <div class="genstatus" id="ref-status"></div>
         </div>
         <div class="refs" id="refs"></div>
+      </section>
+
+      <section class="sec">
+        <div class="sechead"><h2>Learn from your results</h2><span class="hint" id="results-hint"></span></div>
+        <div class="card"><div class="btns"><button class="btn primary" id="learn-results" type="button">Learn from my results</button></div>
+          <p class="usage">Compares your best and weakest videos by views and saves a few rules as notes below. Press Refresh on the Dashboard first so the numbers are current.</p></div>
       </section>
 
       <section class="sec">
@@ -662,7 +678,8 @@ function renderJobs() {
     ...list.map(j => { const [ic, label] = KIND[j.kind] || ["film", j.kind];
       const live = j.status === "queued" || j.status === "working";
       return el("div", { class: "lrow" }, el("span", { class: "kind kindcell" }, icon(ic), label),
-        el("div", { class: "ttl" }, el("b", { text: j.headline || j.video || "Untitled" }), el("span", { text: j.note || (j.status === "queued" ? "Waiting for the current task to finish" : "") })),
+        el("div", { class: "ttl" }, el("b", { text: j.headline || j.video || "Untitled" }), el("span", { text: j.note || (j.status === "queued" ? "Waiting for the current task to finish" : "") }),
+          j.status === "working" ? el("div", { class: "jobmeter", title: "Estimated from the current step" }, el("div", { class: "progress", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(j.progress || 0) }, el("div", { style: "width:" + (j.progress || 0) + "%" })), el("span", { class: "mono", text: (j.progress || 0) + "%" + (j.startedAt ? " · " + Math.max(0, Math.round((Date.now() - Date.parse(j.startedAt)) / 60000)) + " min" : "") })) : ""),
         el("span", { class: "pill " + j.status, text: j.status === "queued" ? "Queued" : j.status === "working" ? "Working" : "Failed" }),
         el("span", { class: "when", text: ago(j.updatedAt || j.createdAt) }),
         live ? twoStep("Cancel", "Confirm", () => cancelJob(j)) : el("button", { class: "btn quiet sm", type: "button", onclick: () => clearJob(j) }, "Clear")); }));
@@ -707,8 +724,24 @@ function renderReviews() {
           el("dt", { text: "Description" }), el("dd", { text: v.description || "" }),
           el("dt", { text: "Hashtags" }), el("dd", { class: "tags", text: (v.hashtags || []).join("  ") }),
           el("dt", { text: "Models" }), el("dd", {}, modelsLine(v, busy))),
+        v.lastRevision ? el("div", { class: "revised" }, el("b", { text: "What changed in your last revision" }), el("div", { class: "learned", text: v.lastRevision.summary.replace(/\*\*/g, ""), style: "white-space:pre-wrap" })) : "",
+        growthPanel(v),
         el("div", { class: "decide" }, busy ? null : fb, btns, confirm)));
   }));
+}
+
+// Pre-post check and title options for a finished video.
+function growthPanel(v) {
+  const r = v.review, o = v.titleOptions;
+  const act = (label, working, path) => el("button", { class: "btn sm", type: "button", onclick: e => slow(e.currentTarget, working, "/api/videos/" + v.id + "/" + path) }, label);
+  return el("div", { class: "growth" },
+    el("div", { class: "btns" }, act(r ? "Score again" : "Score hook & idea", "Scoring…", "score"), act(o ? "New title ideas" : "Title ideas", "Writing titles…", "titles")),
+    r ? el("dl", { class: "kv" },
+      ...[["Hook", r.hook], ["Idea", r.idea], ["Title", r.title]].flatMap(([k, x]) => [el("dt", { text: k }), el("dd", { text: x.score + "/10. " + x.why })]),
+      ...(r.fixes.length ? [el("dt", { text: "Fixes" }), el("dd", { text: r.fixes.join(" • ") })] : [])) : "",
+    o ? el("div", {}, ...o.map(x => el("div", { class: "row" },
+      el("span", { class: "name", text: x.title + (x.caption ? " — " + x.caption : "") }),
+      el("button", { class: "btn quiet sm", type: "button", disabled: x.title === v.title ? "" : null, onclick: () => post("/api/videos/" + v.id + "/use-title", x) }, x.title === v.title ? "In use" : "Use")))) : "");
 }
 
 // Which library models the video really loads (the app reads its page), with a one-click fix when it uses none.
@@ -764,6 +797,12 @@ async function generate() {
   btn.disabled = false;
 }
 $("gen").onclick = generate;
+$("own-form").onsubmit = async e => {
+  e.preventDefault(); const t = $("own-text").value.trim(); if (t.length < 10) { status("Describe your idea in a sentence or two first."); $("own-text").focus(); return; }
+  const btn = $("own-go"); btn.disabled = true;
+  if (await post("/api/ideas/own", { text: t })) { $("own-text").value = ""; status("Your idea is in the works. Claude writes the storyboard and animates it."); }
+  btn.disabled = false;
+};
 
 // ---------- Dashboard ----------
 function renderDash() {
@@ -871,6 +910,7 @@ function renderTrainer() {
       el("div", {}, el("div", { class: "txt", text: n.text }), n.source ? el("div", { class: "src", text: n.source }) : ""),
       el("button", { class: "btn quiet sm", type: "button", "aria-label": "Delete note", title: "Delete", onclick: () => post("/api/trainer/notes/" + n.id + "/delete") }, icon("x"))))
     : [empty("note", "Nothing to remember yet", "Add rules like 'bigger captions' or 'slower ending'.")]));
+  $("results-hint").textContent = (t.resultVideos || 0) >= (t.minResultVideos || 3) ? t.resultVideos + " videos with views" : "Needs views on " + (t.minResultVideos || 3) + " videos (you have " + (t.resultVideos || 0) + ")";
   $("brief").textContent = t.brief || "Nothing switched on yet. Add a note or a reference video above.";
 }
 
@@ -896,6 +936,17 @@ picker.onchange = () => { uploadRef(picker.files[0]); picker.value = ""; };
 for (const ev of ["dragenter", "dragover"]) $("drop").addEventListener(ev, e => { e.preventDefault(); dz.classList.add("over"); });
 for (const ev of ["dragleave", "drop"]) $("drop").addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("over"); });
 $("drop").addEventListener("drop", e => uploadRef(e.dataTransfer.files[0]));
+// Claude calls that take a while: disable the button and say what is happening.
+async function slow(btn, working, url, data) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = working; status(working);
+  try { if (await post(url, data)) status(""); } finally { btn.disabled = false; btn.textContent = label; }
+}
+$("learn-results").onclick = e => slow(e.target, "Studying your results…", "/api/trainer/learn-results");
+$("link-form").onsubmit = async e => {
+  e.preventDefault(); const u = $("ref-link").value.trim(); if (!u) return;
+  refStatus("Adding link…");
+  if (await post("/api/trainer/links", { url: u, note: $("ref-note").value.trim() })) { $("ref-link").value = ""; $("ref-note").value = ""; refStatus("Added. Claude downloads and studies it as soon as the current task is done."); }
+};
 $("note-form").onsubmit = async e => { e.preventDefault(); const t = $("note-text").value.trim(); if (!t) return; if (await post("/api/trainer/notes", { text: t })) $("note-text").value = ""; };
 
 // ---------- Models ----------

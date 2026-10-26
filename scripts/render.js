@@ -56,7 +56,7 @@ const ffmpeg = args => execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'err
     // H.264 high profile + 48 kHz AAC under 25 Mbps fits YouTube, TikTok, Facebook and Instagram specs
     ffmpeg(['-framerate', String(FPS), '-i', path.join(frames, 'f_%05d.jpg'), '-i', wav,
       '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-preset', 'medium', '-crf', '19', '-maxrate', '12M', '-bufsize', '24M',
-      '-c:a', 'aac', '-ar', '48000', '-b:a', '192k', '-shortest', '-movflags', '+faststart', out]);
+      '-c:a', 'aac', '-ar', '48000', '-b:a', '192k', '-shortest', '-map_metadata', '-1', '-movflags', '+faststart', out]);
     fs.rmSync(frames, { recursive: true, force: true }); fs.unlinkSync(wav);
     console.log(`video ok ${out} (${(fs.statSync(out).size / 1e6).toFixed(1)} MB, ${dur}s)`);
   } finally {

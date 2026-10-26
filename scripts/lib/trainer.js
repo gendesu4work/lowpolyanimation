@@ -1,6 +1,6 @@
 // Trainer: reference videos Claude studies, plus notes to remember. Everything switched on is compiled into
 // trainer/STYLE.md, which every animation, revision and idea batch reads first.
-const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const fs = require('fs'), path = require('path'), crypto = require('crypto'), { execFileSync } = require('child_process');
 const { P, readJson, writeJson } = require('./common');
 
 const DIR = path.join(P.root, 'trainer'), FILE = path.join(DIR, 'trainer.json'), BRIEF = path.join(DIR, 'STYLE.md');
@@ -34,6 +34,13 @@ function updateNote(nid, fields) {
   if (fields.text != null) { const s = String(fields.text).trim().slice(0, 500); if (s) n.text = s; }
   return save(t);
 }
+// Rules the app worked out from the creator's own results: replaces the previous set, leaves hand-written notes alone.
+const RESULTS_SOURCE = 'Learned from your results';
+function setResultNotes(rules) {
+  const t = load(); t.notes = t.notes.filter(n => n.source !== RESULTS_SOURCE);
+  for (const r of rules) t.notes.push({ id: newId(), text: String(r).slice(0, 500), active: true, source: RESULTS_SOURCE, createdAt: now() });
+  return save(t);
+}
 function deleteNote(nid) { const t = load(); t.notes = t.notes.filter(x => x.id !== nid); return save(t); }
 
 // Streams an uploaded file to trainer/videos/<id>/source.<ext> and records it as waiting for analysis.
@@ -55,9 +62,32 @@ function receiveVideo(req, name, note) {
     out.on('error', reject);
   });
 }
+// A competitor's video by link: recorded now, downloaded by the analyze job (see downloadLink).
+function addLink(link, note) {
+  let u; try { u = new URL(String(link || '').trim()); } catch { throw new Error('Paste a full link, starting with https://'); }
+  if (!/^https?:$/.test(u.protocol)) throw new Error('Paste a full link, starting with https://');
+  const t = load(), rid = newId();
+  fs.mkdirSync(refDir(rid), { recursive: true });
+  t.videos.push({ id: rid, name: (u.hostname.replace(/^www\./, '') + u.pathname).replace(/\/$/, '').slice(0, 120), url: u.href, file: '', note: String(note || '').slice(0, 500), status: 'queued', active: true, analysis: '', createdAt: now() });
+  save(t); return rid;
+}
+// Fetches the linked video into trainer/videos/<id>/source.mp4 with yt-dlp (pip install yt-dlp), at most 720p.
+function downloadLink(v) {
+  const dir = refDir(v.id), out = path.join(dir, 'source.%(ext)s');
+  try {
+    execFileSync('python', ['-m', 'yt_dlp', '--no-playlist', '--no-warnings', '-f', 'bv*[height<=720]+ba/b[height<=720]/b', '--merge-output-format', 'mp4', '--max-filesize', '1G', '-o', out, v.url], { stdio: 'pipe', timeout: 5 * 60e3 });
+  } catch (e) {
+    const msg = String(e.stderr || e.message);
+    if (/No module named yt_dlp|not found/i.test(msg)) throw new Error('Link downloads need yt-dlp. Run: pip install yt-dlp');
+    throw new Error('Could not download that link (' + (msg.split('\n').filter(Boolean).pop() || 'unknown error').replace(/^ERROR:\s*/, '').slice(0, 160) + '). Save the video to your PC and drop it in instead.');
+  }
+  const file = fs.readdirSync(dir).find(f => f.startsWith('source.') && VIDEO_EXT.includes(path.extname(f).toLowerCase()));
+  if (!file) throw new Error('The link downloaded no video. Save it to your PC and drop it in instead.');
+  updateVideo(v.id, { file }); return file;
+}
 function updateVideo(rid, fields) {
   const t = load(), v = t.videos.find(x => x.id === rid); if (!v) throw new Error('Video not found');
-  for (const k of ['status', 'analysis', 'error', 'durationSec']) if (fields[k] !== undefined) v[k] = fields[k];
+  for (const k of ['status', 'analysis', 'error', 'durationSec', 'file']) if (fields[k] !== undefined) v[k] = fields[k];
   if (fields.active != null) v.active = !!fields.active;
   if (fields.note != null) v.note = String(fields.note).slice(0, 500);
   return save(t);
@@ -76,10 +106,11 @@ Write trainer/videos/${v.id}/analysis.md: at most 25 lines of markdown, with the
 - **Camera:** framing, movement, angles.
 - **Text on screen:** what text appears, where (height in %), size, font style, colors, when.
 - **Look:** palette, lighting, character and set style, effects (glow, blur, outlines).
+- **Idea pattern:** the kind of "What if" premise it uses and how it is framed, so new ideas can follow the same formula with different subjects.
 - **Copy this:** 5 to 8 concrete, specific rules our Three.js low-poly animations can follow (numbers where possible, e.g. "headline at 40% height, 2 lines max").
 Describe only what the frames show.
 
 When done, run: node scripts/job-note.js ${jobId} "Learned"`;
 }
 
-module.exports = { DIR, BRIEF, load, brief, writeBrief, addNote, updateNote, deleteNote, receiveVideo, updateVideo, deleteVideo, refDir, analyzePrompt };
+module.exports = { DIR, BRIEF, load, brief, writeBrief, addNote, setResultNotes, updateNote, deleteNote, receiveVideo, addLink, downloadLink, updateVideo, deleteVideo, refDir, analyzePrompt };
